@@ -30,3 +30,21 @@
 
 # Debug files
 *.dSYM/
+
+# Directory lainnya
+**/build
+**/bin
+**/include
+**/lib
+**/lib64
+**/local
+**/.idea
+
+# Yang lain
+*.json
+*.pyc
+*.pro.user
+*.aplx
+run*
+
+

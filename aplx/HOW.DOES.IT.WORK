@@ -1,0 +1,99 @@
+Note:
+1. Each core is like a cell which might 1 or more chromosomes. Hence, core and cell is interchangably.
+
+---------------- First version -------------------
+
+I. Initial step
+I.1. Each core generates n-chromosomes
+
+II. Evaluation
+II.1. Each core evaluates its own chromosomes objective values
+II.2. Each core evaluates its own chromosomes fitness
+II.3. Each core broadcast its chromosomes alongwith objective values and fitness
+II.4.a. After collecting from all cores, each core compute total fitness and then *their* probabilities
+II.4.b. Specially for leadApp, report to host about these objective values and current solution
+II.5. Each core broadcast their probabilities to all other cores
+II.6.a. After receiving all probability values, each core compute CDF
+II.6.b. Specially for leadApp, generate random number for selection and broadcast to all cores
+II.7. Each cell will use this random number to replace/update its own chromosomes based on the corresponding CDF (it might happen that the cell has the same chromosomes or different ones)
+II.8. If the cell has new chromosomes, then broadcast them (otherwise, silent, to reduce traffic overhead). At this point, all cores still has a full chromosomes configuration.
+
+III. Crossover (Note: all cores has all chromosomes from previous selection step!)
+III.1. leadApp generates mate-pair and distributes/broadcast to all cores. (This is to conform the crossover-rate requirement)
+III.2. Each core checks if it is in the mate-pair list *as the first partner*
+       If yes:
+       III.2.a. Generates a random crossover point and inform its partner/spouse
+       III.2.b. Produces two kids and select the first kid to replace its own chromosomes. For the partner/spouse, select the second kid to replace its chromosomes.
+       III.2.c. Broadcast the new chromosomes to all cells
+
+IV. Mutation (Note: all cores has all chromosomes from previous crossover step!)
+IV.1. leadApp generates n mutation point (based on mutation rate) and distributes to all cores
+IV.2. Each core checks if the mutation point happens in its own chromosomes
+      If yes:
+      IV.2.a. Flip the bit at the mutation point
+      IV.2.b. Broadcast the new chromosomes to all cells
+
+V. Repeat step-II until N-generation is reached or the optimal solution is obtained or host stop the process
+
+-------------- Alternative v.1 ---------------------
+
+I. Initial step
+I.1. Each core generates n-chromosomes
+
+II. Evaluation
+II.0. leadApp broadcast: current step, random number for selection, future mate-pair for crossover, and future mutation point
+II.1. Each core evaluates its own chromosomes objective values
+II.2. Each core evaluates its own chromosomes fitness
+II.3. Each core broadcast its chromosomes alongwith objective values and fitness
+II.4.a. After collecting from all cores, each core compute total fitness and then *their* probabilities
+II.4.b. Specially for leadApp, report to host about these objective values and current solution
+II.5. Each core broadcast their probabilities to all other cores
+II.6. After receiving all probability values, each core compute CDF
+II.7. Each cell will use this random number to replace/update its own chromosomes based on the corresponding CDF (it might happen that the cell has the same chromosomes or different ones)
+II.8. If the cell has new chromosomes, then broadcast them (otherwise, silent, to reduce traffic overhead). At this point, all cores still has a full chromosomes configuration.
+
+III. Crossover (Note: all cores has all chromosomes from previous selection step!)
+III.1. Each core checks if it is in the mate-pair list *as the first partner*
+       If yes:
+       III.2.a. Generates a random crossover point and inform its partner/spouse
+       III.2.b. Produces two kids and select the first kid to replace its own chromosomes. For the partner/spouse, select the second kid to replace its chromosomes.
+       III.2.c. Broadcast the new chromosomes to all cells
+
+IV. Mutation (Note: all cores has all chromosomes from previous crossover step!)
+IV.1. Each core checks if the mutation point happens in its own chromosomes
+      If yes:
+      IV.2.a. Flip the bit at the mutation point
+      IV.2.b. Broadcast the new chromosomes to all cells
+
+V. Repeat step-II until N-generation is reached or the optimal solution is obtained or host stop the process
+
+-------------- Alternative v.2 ---------------------
+
+Idea:
+1. One chip == one island
+2. Each gene is encoded as 32-bit
+   2a. It can be presented as a standard binary or grey
+3. Will use std fix point to represent real value number
+4. Chromosomes will be stored in sdram
+   4a. Workers can fetch them according to their "region-load" via dma and put the result also via dma
+5. leadAp bertanggungjawab untuk:
+   - generate initial population
+   - generate random numbers
+   - do the roullette
+
+Note: Berdasarkan testMassiveMCPL, it's OK to simultaneously broadcast, selama:
+- gunakan FIQ
+- no complicated processing inside hMCPL
+
+I. Preparation step
+I.0. the number of population is predefined (or, in fugure, configured by host)
+I.1. leadAp pools how many workers are available
+I.1.a. Workers respond by sending their core-ID
+I.1.b. leadAp collect them, assign working ID to workers, and broadcast it
+I.1.c. each worker then get its working ID and compute its working-load
+I.1.d. leadAp broadcast information about GA model (number of gen), location of chromosomes in sdram, etc.
+
+II. Initial step
+II.1. each core initially generates n-chromosomes (n was sent by leadAp)
+II.2. each core evaluates its own chromosomes objective values
+II.3. each core evaluates its own chromosomes fitness
