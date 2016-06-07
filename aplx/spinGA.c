@@ -1,7 +1,7 @@
 #include <spin1_api.h>
 #include "spinGA.h"
 
-/*------------------------------ Initialization ------------------------------*/
+/*---------------------------- Initialization ------------------------------*/
 void initSDP()
 {
 	spin1_callback_on(SDP_PACKET_RX, hSDP, PRIORITY_SDP);
@@ -11,15 +11,15 @@ void initSDP()
     reportMsg->srce_addr = sv->p2p_addr;
     reportMsg->dest_port = PORT_ETH;
     reportMsg->dest_addr = sv->eth_addr;
-    reportMsg->length = sizeof(sdp_hdr_t) + sizeof(cmd_hdr_t);
+    //reportMsg->length = sizeof(sdp_hdr_t) + sizeof(cmd_hdr_t);
 }
 
 /* Routing strategy for sending a chromosome (broadcast):
- * - broadcast ping
+ * - broadcast ping, for collecting workers' coreID
  *   key     : 0xbca50001
  *   payload : 0
  *   dest    : 0xFFFFFF80 -> intra chip only, excluding core-0
- * - worker reports ID
+ * - worker reports coreID
  *   key     : 0x1ead0001
  *   payload : core-ID
  *   dest    : (1 << (leadApCore+6))
@@ -76,10 +76,11 @@ void selfSimulation()
 {
     nChr = DEF_N_CHR;
     nGen = DEF_RASTRIGIN_ORDER;
+    initGA();
 }
-/*--------------------------------------------------------- Initialization ---*/
+/*------------------------------------------------------- Initialization ---*/
 
-/*---------------------------- EVENT HANDLERS ----------------------------------*/
+/*-------------------------- EVENT HANDLERS --------------------------------*/
 void hTimer(uint tick, uint Unused)
 {
     if(tick==1)
@@ -90,7 +91,7 @@ void hTimer(uint tick, uint Unused)
         // when scheduling, DON'T USE PRIORITY LOWER THAN 1
         spin1_schedule_callback(poolWorkers, 0, 0, PRIORITY_NORMAL);
     }
-    // assumming that 1s is enough for collecting data
+    // assumming that 1sec above is enough for collecting data
     else if(tick==3) {
         for(uint i=0; i<workers.tAvailable; i++) {
             spin1_send_mc_packet(workers.wID[i], i, WITH_PAYLOAD);
@@ -140,10 +141,10 @@ void poolWorkers(uint arg0, uint arg1)
     spin1_send_mc_packet(MCPL_BCAST_PING, 0, WITH_PAYLOAD);
 }
 
-/*--------------------------------------------------------- EVENT HANDLERS ---*/
+/*------------------------------------------------------- EVENT HANDLERS ---*/
 
 
-/*----------------------------- Main Program ---------------------------------*/
+/*---------------------------- Main Program --------------------------------*/
 void c_main()
 {
     myCoreID = spin1_get_core_id();
@@ -162,10 +163,6 @@ void c_main()
     spin1_callback_on(DMA_TRANSFER_DONE, hDMADone, PRIORITY_DMA);
 
     if(leadAp) {
-        // timer is optional, just for debugging
-        spin1_set_timer_tick(TIMER_TICK_PERIOD);
-        spin1_callback_on(TIMER_TICK, hTimer, PRIORITY_TIMER);
-
         initSDP();
 
         workers.tAvailable = 0;
@@ -175,8 +172,10 @@ void c_main()
         initRouter();
 
         // instead of GA config from host, let's just do selfSimulation()
-        selfSimulation();
-        initGA();
+        selfSimulation();   // should be replaced by SDP in future
+        // timer is optional, in this case, we use it to trigger simulation
+        spin1_set_timer_tick(TIMER_TICK_PERIOD);
+        spin1_callback_on(TIMER_TICK, hTimer, PRIORITY_TIMER);
 
         spin1_delay_us(500000); // let workers to be settle
     }
@@ -187,11 +186,11 @@ void c_main()
 }
 
 
-/*-------------------------------- IMPLEMENTATION ----------------------------------*/
+/*------------------------------ IMPLEMENTATION -------------------------------*/
 
 
-/* initMyChromosomes() will generate initial N-chromosomes that will be stored in the Chromosomes buffer
- * (where N is DEF_RASTRIGIN_ORDER).
+/* initMyChromosomes() will generate initial N-chromosomes that will be stored in
+ * the Chromosomes buffer (where N is DEF_RASTRIGIN_ORDER).
  * At this point, the collectedChromosomes will be equal to DEF_RASTRIGIN_ORDER
  * Afterwards, each cell will wait for chromosomes from another cells.
  * */
@@ -214,42 +213,6 @@ void initMyChromosomes()
             io_printf(IO_BUF, "Generating gen = %k -> 0x%x -> %k\n", g, gg, ig);
         }
     collectedGenes = DEF_N_CHR_PER_CORE * DEF_RASTRIGIN_ORDER;
-}
-
-void showMyChromosomes()
-{
-    uint i,j;
-    for(i=0; i<DEF_N_CHR_PER_CORE*NUM_CORES_USED; i++) {
-        io_printf(IO_BUF, "Chromosome-%2d = 0x", i);
-        for(j=0; j<DEF_RASTRIGIN_ORDER; j++)
-            io_printf(IO_BUF, "%x", Chromosomes[i][j]);
-        io_printf(IO_BUF, "\n");
-        spin1_delay_us(1000);
-    }
-}
-
-void bcastMyChromosomes(uint arg0, uint arg1)
-{
-    // Debugging
-    //io_printf(IO_STD, "Cell-%d broadcasts chromosomes...\n", myCellID);
-    //showMyChromosomes();
-    uint i, j, key, data, idx;
-    uint ii, ss, xx;	// key: 0xBCiissxx, "BC" = broadcast id, ii = chromosome ID, ss = cell-ID, xx = gen-ID
-    for(i=0; i<DEF_N_CHR_PER_CORE; i++)
-        for(j=0; j<DEF_RASTRIGIN_ORDER; j++){
-            idx = myCellID*DEF_N_CHR_PER_CORE + i;
-            xx = j;
-            ss = myCellID << 8;
-            ii = idx << 16; // chromosome ID is computed by the sender cell
-            key = 0xBC000000;
-            key |= (ii | ss | xx);
-            data = Chromosomes[idx][j];
-            spin1_send_mc_packet(key, data, WITH_PAYLOAD);
-            //io_printf(IO_BUF, "Sending 0x%x:0x%x\n", key, data);
-            //io_printf(IO_STD, "Broadcast my chromosomes:\n");
-            //TODO: masih ada packet drop!!!
-            //spin1_delay_us(100);
-        }
 }
 
 /*----------------------------------- GA Stuffs ----------------------------------------*/
