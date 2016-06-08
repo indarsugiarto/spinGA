@@ -51,7 +51,7 @@ void initRouter()
             rtr_mc_set(e+i, i+1, 0xFFFFFFFF, (MC_CORE_ROUTE(i+1)));
     }
     // broadcast and toward_leader MCPL
-	e = rtr_alloc(6);
+	e = rtr_alloc(7);
     if ( e== 0)
         rt_error(RTE_ABORT);
     else {
@@ -62,6 +62,7 @@ void initRouter()
 		rtr_mc_set(e+3, MCPL_BCAST_NCHRGEN, 0xFFFFFFFF, allRoute);
 		rtr_mc_set(e+4, MCPL_BCAST_MINVAL, 0xFFFFFFFF, allRoute);
 		rtr_mc_set(e+5, MCPL_BCAST_MAXVAL, 0xFFFFFFFF, allRoute);
+		rtr_mc_set(e+6, MCPL_BCAST_EOC, 0xFFFFFFFF, allRoute);
     }
 }
 
@@ -91,6 +92,7 @@ void selfSimulation()
 	spin1_send_mc_packet(MCPL_BCAST_NCHRGEN, (nChr << 16) + nGen, WITH_PAYLOAD);
 	spin1_send_mc_packet(MCPL_BCAST_MINVAL, (uint)minGenVal, WITH_PAYLOAD);
 	spin1_send_mc_packet(MCPL_BCAST_MAXVAL, (uint)maxGenVal, WITH_PAYLOAD);
+	spin1_send_mc_packet(MCPL_BCAST_EOC, 0, WITH_PAYLOAD);
 }
 
 void reportInitChr(uint arg0, uint arg1)
@@ -142,11 +144,10 @@ void hTimer(uint tick, uint Unused)
         }
     }
 	else if(tick==4) {
-		io_printf(IO_STD, "Start simulation\n");
+		io_printf(IO_STD, "Set simulation parameter\n");
 		// instead of GA config from host, let's just do selfSimulation()
 		selfSimulation();   // should be replaced by SDP in future
 	}
-
 }
 
 
@@ -160,6 +161,7 @@ void hSDP(uint mBox, uint port)
 
 void hDMADone(uint tid, uint tag)
 {
+	io_printf(IO_BUF, "dma tag-%d has finished!\n", tag);
 	if(tag==DMA_TAG_CHRCHUNK_W) {
 		spin1_send_mc_packet(MCPL_2LEAD_INITCHR_RPT, myCoreID, WITH_PAYLOAD);
 	}
@@ -178,7 +180,9 @@ void hMCPL(uint key, uint payload)
     }
     // all cores will receives the following wID
     else if(key==myCoreID) {
-		spin1_schedule_callback(computeWload, payload, 0, PRIORITY_NORMAL);
+		//spin1_schedule_callback(computeWload, payload, 0, PRIORITY_NORMAL);
+		workers.tAvailable = payload >> 16;
+		workers.wID[myCoreID] = payload & 0xFFFF;
     }
 	else if(key==MCPL_2LEAD_INITCHR_RPT) {
 		initPopCntr++;
@@ -189,21 +193,21 @@ void hMCPL(uint key, uint payload)
 	else if(key==MCPL_BCAST_NCHRGEN) {
 		nGen = payload & 0xFFFF;
 		nChr = payload >> 16;
+		io_printf(IO_BUF, "got nGen = %d, nChr = %d\n", nGen, nChr);
 	}
 	else if(key==MCPL_BCAST_MINVAL) minGenVal = (REAL)payload;
 	else if(key==MCPL_BCAST_MAXVAL) maxGenVal = (REAL)payload;
+	else if(key==MCPL_BCAST_EOC) spin1_schedule_callback(computeWload, 0, 0, PRIORITY_NORMAL);
 }
 
-// at this point, the basic parameters such as nChr and nGen have been defined
+// at this point, the basic parameters such as nChr and nGen should have been defined
 // here we compute chrIdxStart and chrIdxEnd
-void computeWload(uint payload, uint arg1)
+void computeWload(uint arg0, uint arg1)
 {
 	uint n, r;
 	ushort tAvailable, wID;
-	tAvailable = payload >> 16;
-	wID = payload & 0xFFFF;
-	workers.tAvailable = tAvailable;
-	workers.wID[myCoreID] = wID;	// working load (wID) might be different to coreID
+	tAvailable = workers.tAvailable;
+	wID = workers.wID[myCoreID];
 	n = nChr / tAvailable;
 	r = nChr % tAvailable;
 	io_printf(IO_BUF, "nChr = %d, n = %d, r = %d, tAvailable = %d, wID = %d\n", 
@@ -292,9 +296,9 @@ void initPopulation()
 		}
 	// step-2: transfer to sdram via dma
 	// NOTE: uint direction: 0 = transfer to TCM, 1 = transfer to system
-	spin1_dma_transfer(DMA_TAG_CHRCHUNK_W, (void *)chr,
+	uint check = spin1_dma_transfer(DMA_TAG_CHRCHUNK_W, (void *)chr,
 					   (void *)chrChunk, DMA_WRITE, szChrChunk*sizeof(uint));
-
+	// TODO: check check!
 	/*
 	uint h,i, gg;
 	REAL g, ig;

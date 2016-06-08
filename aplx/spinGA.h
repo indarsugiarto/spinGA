@@ -35,6 +35,7 @@
 #define MCPL_BCAST_NCHRGEN	0xbca50002
 #define MCPL_BCAST_MINVAL	0xbca50003
 #define MCPL_BCAST_MAXVAL	0xbca50004
+#define MCPL_BCAST_EOC		0xbca50005	// broadcast end of config
 
 // basic DMA mechanisme
 #define DMA_TAG_CHRCHUNK_W		0xc1
