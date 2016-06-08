@@ -32,6 +32,9 @@
 #define MCPL_BCAST_PING         0xbca50001
 #define MCPL_2LEAD_PING_RPT		0x1ead0001	// ping reply/report
 #define MCPL_2LEAD_INITCHR_RPT	0x1ead0002	// operation completion init population
+#define MCPL_BCAST_NCHRGEN	0xbca50002
+#define MCPL_BCAST_MINVAL	0xbca50003
+#define MCPL_BCAST_MAXVAL	0xbca50004
 
 // basic DMA mechanisme
 #define DMA_TAG_CHRCHUNK_W		0xc1

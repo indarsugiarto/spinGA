@@ -51,7 +51,7 @@ void initRouter()
             rtr_mc_set(e+i, i+1, 0xFFFFFFFF, (MC_CORE_ROUTE(i+1)));
     }
     // broadcast and toward_leader MCPL
-	e = rtr_alloc(3);
+	e = rtr_alloc(6);
     if ( e== 0)
         rt_error(RTE_ABORT);
     else {
@@ -59,6 +59,9 @@ void initRouter()
         rtr_mc_set(e, MCPL_BCAST_PING, 0xFFFFFFFF, allRoute);
 		rtr_mc_set(e+1, MCPL_2LEAD_PING_RPT, 0xFFFFFFFF, leader);
 		rtr_mc_set(e+2, MCPL_2LEAD_INITCHR_RPT, 0xFFFFFFFF, leader);
+		rtr_mc_set(e+3, MCPL_BCAST_NCHRGEN, 0xFFFFFFFF, allRoute);
+		rtr_mc_set(e+4, MCPL_BCAST_MINVAL, 0xFFFFFFFF, allRoute);
+		rtr_mc_set(e+5, MCPL_BCAST_MAXVAL, 0xFFFFFFFF, allRoute);
     }
 }
 
@@ -84,6 +87,10 @@ void selfSimulation()
 	minGenVal = DEF_RASTRIGIN_MINVAL;
 	maxGenVal = DEF_RASTRIGIN_MAXVAL;
 	initMemGA();
+	// then distribute the above parameters
+	spin1_send_mc_packet(MCPL_BCAST_NCHRGEN, (nChr << 16) + nGen, WITH_PAYLOAD);
+	spin1_send_mc_packet(MCPL_BCAST_MINVAL, (uint)minGenVal, WITH_PAYLOAD);
+	spin1_send_mc_packet(MCPL_BCAST_MAXVAL, (uint)maxGenVal, WITH_PAYLOAD);
 }
 
 void reportInitChr(uint arg0, uint arg1)
@@ -93,7 +100,20 @@ void reportInitChr(uint arg0, uint arg1)
 
 void showMyChromosomes()
 {
-
+	uint c,g;
+	uint **pChr = (uint **)chr;
+	io_printf(IO_STD, "Initial population:\n-------------------\n");
+	for(c=0; c<nChr; c++) {
+		for(g=0; g<nGen; g++) {
+			io_printf(IO_STD, "0x%x ", pChr[c][g]);
+		}
+		io_printf(IO_STD, " = ");
+		for(g=0; g<nGen; g++) {
+			io_printf(IO_STD, "%k ", pChr[c][g]);
+		}
+		io_printf(IO_STD, "\n");
+		
+	}
 }
 
 /*------------------------------------------------------- Initialization ---*/
@@ -114,6 +134,7 @@ void hTimer(uint tick, uint Unused)
 	// payload.high = total number of worker
 	// payload.low = wID
     else if(tick==3) {
+		io_printf(IO_STD, "Broadcasting wIDs\n");
 		uint payload;
 		for(uint i=0; i<workers.tAvailable; i++) {
 			payload = (workers.tAvailable << 16) + i;
@@ -121,9 +142,11 @@ void hTimer(uint tick, uint Unused)
         }
     }
 	else if(tick==4) {
+		io_printf(IO_STD, "Start simulation\n");
 		// instead of GA config from host, let's just do selfSimulation()
 		selfSimulation();   // should be replaced by SDP in future
 	}
+
 }
 
 
@@ -162,6 +185,13 @@ void hMCPL(uint key, uint payload)
 		if(initPopCntr==workers.tAvailable)
 			spin1_schedule_callback(reportInitChr, 0, 0, PRIORITY_NORMAL);
 	}
+
+	else if(key==MCPL_BCAST_NCHRGEN) {
+		nGen = payload & 0xFFFF;
+		nChr = payload >> 16;
+	}
+	else if(key==MCPL_BCAST_MINVAL) minGenVal = (REAL)payload;
+	else if(key==MCPL_BCAST_MAXVAL) maxGenVal = (REAL)payload;
 }
 
 // at this point, the basic parameters such as nChr and nGen have been defined
@@ -176,6 +206,8 @@ void computeWload(uint payload, uint arg1)
 	workers.wID[myCoreID] = wID;	// working load (wID) might be different to coreID
 	n = nChr / tAvailable;
 	r = nChr % tAvailable;
+	io_printf(IO_BUF, "nChr = %d, n = %d, r = %d, tAvailable = %d, wID = %d\n", 
+		nChr, n, r, tAvailable, wID);
 	chrIdxStart = wID * n;
 	chrIdxEnd = chrIdxStart + n-1;
 	if(wID==tAvailable-1)
@@ -184,9 +216,11 @@ void computeWload(uint payload, uint arg1)
 	if(chrChunk != NULL)
 		sark_free(chrChunk);
 	szChrChunk = (chrIdxEnd - chrIdxStart + 1)*nGen;
+	io_printf(IO_BUF, "Will allocate DTCM %d-bytes\n", szChrChunk*sizeof(uint));
 	chrChunk = sark_alloc(szChrChunk, sizeof(uint));
 	if(chrChunk == NULL) {
 		io_printf(IO_STD, "Error allocating DTCM for chunk by core-%d\n", myCoreID);
+		io_printf(IO_BUF, "Error allocating DTCM for chunk by core-%d\n", myCoreID);
 		rt_error(RTE_ABORT);
 	}
 	// then automatically initialize population
