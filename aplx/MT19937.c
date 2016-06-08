@@ -143,9 +143,11 @@ You can use the method to generate random numbers with nearly any probability di
 
  *
  * */
+// in genrand_fixp(), set seed to 0 if the rng has been initialized
 REAL genrand_fixp(REAL minVal, REAL maxVal, uint seed)
 {
-	//init_genrand(seed);
+	if(seed != 0)
+		init_genrand(seed);
 	ushort rr = genrand_int32() >> 16;
 	REAL upper = REAL_CONST(0.0);
 	REAL ratio = (maxVal-minVal)/maxVal;

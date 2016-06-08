@@ -30,11 +30,17 @@
 
 // basic MCPL key allocation
 #define MCPL_BCAST_PING         0xbca50001
-#define MCPL_2LEAD_RPT          0x1ead0001
+#define MCPL_2LEAD_PING_RPT		0x1ead0001	// ping reply/report
+#define MCPL_2LEAD_INITCHR_RPT	0x1ead0002	// operation completion init population
+
+// basic DMA mechanisme
+#define DMA_TAG_CHRCHUNK_W		0xc1
+
+// does leadAp also works as a worker?
+#define LEADAP_AS_WORKER		FALSE
 
 // basic GA setup
 #define DEF_N_CHR               100
-#define DEF_RASTRIGIN_ORDER			2		// the dimension of the function (1..10)
 #define NUM_CORES_USED				16		// assuming that all 16 cores are available
 #define TOTAL_GENES					DEF_N_CHR_PER_CORE * DEF_RASTRIGIN_ORDER * NUM_CORES_USED
 #define TOTAL_CHROMOSOMES			DEF_N_CHR_PER_CORE * NUM_CORES_USED
@@ -42,20 +48,33 @@
 #define MIN_PARAM					-5.12
 #define MAX_PARAM					5.12
 
+// for simple simulation using Rastrigin
+#define DEF_RASTRIGIN_ORDER			2		// the dimension of the function (1..10)
+#define DEF_RASTRIGIN_MINVAL		(REAL_CONST(-6.0))
+#define DEF_RASTRIGIN_MAXVAL		(REAL_CONST(6.0))
+
 // worker info
 typedef struct w_info {
-    uchar wID[17];			// this is the coreID, maximum worker is 17
+	ushort wID[NUM_CORES_USED];			// this is the coreID, maximum worker is 17
     //uchar subBlockID[17];	// just a helper, this maps subBlockID of workers
-    uchar tAvailable;		// how many workers? should be initialized to 1
+	ushort tAvailable;		// how many workers? should be initialized to 1
 } w_info_t;
 
-
-uint *chr = NULL;                      // location of chromosomes in sdram
+uint *chr = NULL;                      // location of current chromosomes in sdram
+uint *chrChunk = NULL;			// located in DTCM, for each worker
+uint szChrChunk;
 uint nChr;                      // number of chromosomes
 uint nGen;                      // number of genes in a chromosomes
+REAL minGenVal;
+REAL maxGenVal;
 uint myCoreID;
+ushort chrIdxStart;
+ushort chrIdxEnd;
 w_info_t workers;			// will be held by leadAp
 sdp_msg_t *reportMsg;
+uint initPopCntr = 0;
+
+
 uint tik = 0;
 uint myCoreID;
 uint myCellID;
@@ -63,12 +82,6 @@ uint genCntr = 0;
 uint prevCellPacketCntr = 0;
 uint iter = 1;
 
-#define TIMER_TICK_PERIOD		1000000
-
-/* GA parameters */
-uint Chromosomes[DEF_N_CHR_PER_CORE * NUM_CORES_USED][DEF_RASTRIGIN_ORDER] = {0};
-uint collectedGenes;					// a counter to count how many chromosomes are collected so far
-                                        // if Chromosomes buffer is full, then start the calculation
 REAL m, b;								// linear regression parameters
 
 
@@ -84,11 +97,9 @@ void initSDP();
 void initRouter();
 
 // GA core engine
-void initGA();
+void initMemGA();
 void objEval();
 void getRegParam(REAL *m, REAL *b);
-uint encodeGen(REAL rVal);
-REAL decodeGen(uint gen);
 void showMyChromosomes();
 void checkMyTurn(uint cellID);
 void bcastMyChromosomes(uint arg0, uint arg1);
@@ -96,10 +107,15 @@ void bcastMyChromosomes(uint arg0, uint arg1);
 extern void init_genrand(unsigned long s);
 extern uint genrand_int32(void);
 extern REAL genrand_fixp(REAL minVal, REAL maxVal, uint seed);
-// helper functions:
+// user defined models
+extern uint encodeGen(REAL rVal);
+extern REAL decodeGen(uint gen);
+void initPopulation();
+// helper functions and debugging:
 uint bin2gray(uint num);
 uint gray2bin(uint num);
 REAL roundr(REAL inVal);
+void reportInitChr(uint arg0, uint arg1);
 
 #endif // SPINGA_H
 

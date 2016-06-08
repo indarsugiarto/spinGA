@@ -33,6 +33,11 @@ void initRouter()
     uint allRoute = 0xFFFF80;	// excluding core-0 and external links
     uint leader = (1 << (myCoreID+6));
 
+	// do we ask leadAp to work as worker?
+#if (LEADAP_AS_WORKER==FALSE)
+	allRoute &= ~leader;
+#endif
+
     uint e, i;
     mask = 0xFFFFFFFF;
     // individual info/cmd, assuming 17 working core
@@ -47,18 +52,19 @@ void initRouter()
             rtr_mc_set(e+i, i+1, 0xFFFFFFFF, (MC_CORE_ROUTE(i+1)));
     }
     // broadcast and toward_leader MCPL
-    e = rtr_alloc(2);
+	e = rtr_alloc(3);
     if ( e== 0)
         rt_error(RTE_ABORT);
     else {
         // allRoute &= ~leader;    // remove leadAp
         rtr_mc_set(e, MCPL_BCAST_PING, 0xFFFFFFFF, allRoute);
-        rtr_mc_set(e+1, MCPL_2LEAD_RPT, 0xFFFFFFFF, leader);
+		rtr_mc_set(e+1, MCPL_2LEAD_PING_RPT, 0xFFFFFFFF, leader);
+		rtr_mc_set(e+2, MCPL_2LEAD_INITCHR_RPT, 0xFFFFFFFF, leader);
     }
 }
 
 // initGA() will allocate memory in SDRAM to hold chromosomes
-void initGA()
+void initMemGA()
 {
     uint szChr = nChr * nGen * sizeof(uint);
     if(chr != NULL)
@@ -71,13 +77,21 @@ void initGA()
 }
 
 // selfSimulation() is just for providing an alternative for GA configuration
-// in final version, the GA configuration can be sent via SDP from a host
+// in final version, the GA configuration (all variables) will be sent via SDP from a host
 void selfSimulation()
 {
     nChr = DEF_N_CHR;
     nGen = DEF_RASTRIGIN_ORDER;
-    initGA();
+	minGenVal = DEF_RASTRIGIN_MINVAL;
+	maxGenVal = DEF_RASTRIGIN_MAXVAL;
+	initMemGA();
 }
+
+void reportInitChr(uint arg0, uint arg1)
+{
+
+}
+
 /*------------------------------------------------------- Initialization ---*/
 
 /*-------------------------- EVENT HANDLERS --------------------------------*/
@@ -92,11 +106,20 @@ void hTimer(uint tick, uint Unused)
         spin1_schedule_callback(poolWorkers, 0, 0, PRIORITY_NORMAL);
     }
     // assumming that 1sec above is enough for collecting data
+	// the payload will be split into:
+	// payload.high = total number of worker
+	// payload.low = wID
     else if(tick==3) {
-        for(uint i=0; i<workers.tAvailable; i++) {
-            spin1_send_mc_packet(workers.wID[i], i, WITH_PAYLOAD);
+		uint payload;
+		for(uint i=0; i<workers.tAvailable; i++) {
+			payload = (workers.tAvailable << 16) + i;
+			spin1_send_mc_packet(workers.wID[i], payload, WITH_PAYLOAD);
         }
     }
+	else if(tick==4) {
+		// instead of GA config from host, let's just do selfSimulation()
+		selfSimulation();   // should be replaced by SDP in future
+	}
 }
 
 
@@ -110,7 +133,9 @@ void hSDP(uint mBox, uint port)
 
 void hDMADone(uint tid, uint tag)
 {
-
+	if(tag==DMA_TAG_CHRCHUNK_W) {
+		spin1_send_mc_packet(MCPL_2LEAD_INITCHR_RPT, myCoreID, WITH_PAYLOAD);
+	}
 }
 
 
@@ -118,7 +143,7 @@ void hMCPL(uint key, uint payload)
 {
     if(key==MCPL_BCAST_PING) {
         // send core-ID to leadAp, including leadAp itself
-        spin1_send_mc_packet(MCPL_2LEAD_RPT, myCoreID, WITH_PAYLOAD);
+		spin1_send_mc_packet(MCPL_2LEAD_PING_RPT, myCoreID, WITH_PAYLOAD);
     }
     else if(key==MCPL_2LEAD_RPT) {
         workers.wID[workers.tAvailable] = payload;
@@ -126,13 +151,42 @@ void hMCPL(uint key, uint payload)
     }
     // all cores will receives the following wID
     else if(key==myCoreID) {
-        spin1_schedule_callback(computeWload, 0, 0, PRIORITY_NORMAL);
+		spin1_schedule_callback(computeWload, payload, 0, PRIORITY_NORMAL);
     }
+	else if(key==MCPL_2LEAD_INITCHR_RPT) {
+		initPopCntr++;
+		if(initPopCntr==workers.tAvailable)
+			spin1_schedule_callback(reportInitChr, 0, 0, PRIORITY_NORMAL);
+	}
 }
 
-void computeWload(uint arg0, uint arg1)
+// at this point, the basic parameters such as nChr and nGen have been defined
+// here we compute chrIdxStart and chrIdxEnd
+void computeWload(uint payload, uint arg1)
 {
-
+	uint n, r;
+	ushort tAvailable, wID;
+	tAvailable = payload >> 16;
+	wID = payload & 0xFFFF;
+	workers.tAvailable = tAvailable;
+	workers.wID[myCoreID] = wID;	// working load (wID) might be different to coreID
+	n = nChr / tAvailable;
+	r = nChr % tAvailable;
+	chrIdxStart = wID * n;
+	chrIdxEnd = chrIdxStart + n-1;
+	if(wID==tAvailable-1)
+		chrIdxEnd += r;
+	// then prepare DTCM memory
+	if(chrChunk != NULL)
+		sark_free(chrChunk);
+	szChrChunk = (chrIdxEnd - chrIdxStart + 1)*nGen;
+	chrChunk = sark_alloc(szChrChunk, sizeof(uint));
+	if(chrChunk == NULL) {
+		io_printf(IO_STD, "Error allocating DTCM for chunk by core-%d\n", myCoreID);
+		rt_error(RTE_ABORT);
+	}
+	// then automatically initialize population
+	initPopulation();
 }
 
 void poolWorkers(uint arg0, uint arg1)
@@ -171,8 +225,6 @@ void c_main()
         //io_printf(IO_STD, "The leader core is %u\n", myCoreID);
         initRouter();
 
-        // instead of GA config from host, let's just do selfSimulation()
-        selfSimulation();   // should be replaced by SDP in future
         // timer is optional, in this case, we use it to trigger simulation
         spin1_set_timer_tick(TIMER_TICK_PERIOD);
         spin1_callback_on(TIMER_TICK, hTimer, PRIORITY_TIMER);
@@ -189,33 +241,47 @@ void c_main()
 /*------------------------------ IMPLEMENTATION -------------------------------*/
 
 
-/* initMyChromosomes() will generate initial N-chromosomes that will be stored in
- * the Chromosomes buffer (where N is DEF_RASTRIGIN_ORDER).
- * At this point, the collectedChromosomes will be equal to DEF_RASTRIGIN_ORDER
- * Afterwards, each cell will wait for chromosomes from another cells.
- * */
-void initMyChromosomes()
+/*----------------------------------- GA Stuffs ----------------------------------------*/
+
+// in initPopulation(), each worker generates initial populations and store them in *chr
+void initPopulation()
 {
-    /* generate random value between MIN_PARAM and MAX_PARAM */
-    uint h,i, gg;
-    REAL g, ig;
-    // initialize own chromosomes, don't care with the others...
-    for(h=0; h<DEF_N_CHR_PER_CORE; h++)
-        for(i=0; i<DEF_RASTRIGIN_ORDER; i++) {
-            g = genrand_fixp(MIN_PARAM, MAX_PARAM, sv->clock_ms);
-            //Chromosomes[myCellID*DEF_N_CHR_PER_CORE + h][i] = encodeGen(g);
-            //io_printf(IO_BUF, "Generating g = %k, converted into 0x%x\n", g, encodeGen(g));
-            //gg = genrand_int32();
-            //gg = spin1_rand();
-            gg = encodeGen(g);
-            ig = decodeGen(gg);
-            Chromosomes[myCellID*DEF_N_CHR_PER_CORE + h][i] = gg;
-            io_printf(IO_BUF, "Generating gen = %k -> 0x%x -> %k\n", g, gg, ig);
-        }
-    collectedGenes = DEF_N_CHR_PER_CORE * DEF_RASTRIGIN_ORDER;
+	uint c, g;	// chromosome and gene counter
+	uint gg;	// encoded gen
+	REAL G;
+	uint **pChr = (uint **)chrChunk;
+	// step-1: generate chromosomes and store in chrChunk
+	for(c=0; c<(chrIdxEnd-chrIdxStart+1); c++)
+		for(g=0; g<nGen; g++) {
+			G = genrand_fixp(minGenVal, maxGenVal, 0);
+			gg = bin2gray(encodeGen(G));
+			pChr[c][g] = gg;
+		}
+	// step-2: transfer to sdram via dma
+	// NOTE: uint direction: 0 = transfer to TCM, 1 = transfer to system
+	spin1_dma_transfer(DMA_TAG_CHRCHUNK_W, (void *)chr,
+					   (void *)chrChunk, DMA_WRITE, szChrChunk*sizeof(uint));
+
+	/*
+	uint h,i, gg;
+	REAL g, ig;
+	// initialize own chromosomes, don't care with the others...
+	for(h=0; h<DEF_N_CHR_PER_CORE; h++)
+		for(i=0; i<DEF_RASTRIGIN_ORDER; i++) {
+			g = genrand_fixp(MIN_PARAM, MAX_PARAM, sv->clock_ms);
+			//Chromosomes[myCellID*DEF_N_CHR_PER_CORE + h][i] = encodeGen(g);
+			//io_printf(IO_BUF, "Generating g = %k, converted into 0x%x\n", g, encodeGen(g));
+			//gg = genrand_int32();
+			//gg = spin1_rand();
+			gg = encodeGen(g);
+			ig = decodeGen(gg);
+			Chromosomes[myCellID*DEF_N_CHR_PER_CORE + h][i] = gg;
+			io_printf(IO_BUF, "Generating gen = %k -> 0x%x -> %k\n", g, gg, ig);
+		}
+	collectedGenes = DEF_N_CHR_PER_CORE * DEF_RASTRIGIN_ORDER;
+	*/
 }
 
-/*----------------------------------- GA Stuffs ----------------------------------------*/
 void objEval()
 {
 /*
@@ -283,19 +349,19 @@ REAL roundr(REAL inVal)
 {
     uint base = (uint)inVal;
     uint upper = base + 1;
-    REAL conver = inVal+REAL_CONST(0.5);
+	REAL conver = inVal+REAL_CONST(0.5);
     if((uint)conver == base)
         return (REAL)base;
     else
         return (REAL)upper;
 }
 
-unsigned int bin2gray(unsigned int num)
+uint bin2gray(uint num)
 {
     return num ^ (num >> 1);
 }
 
-unsigned int gray2bin(unsigned int num)
+uint gray2bin(uint num)
 {
     num = num ^ (num >> 16);
     num = num ^ (num >> 8);
