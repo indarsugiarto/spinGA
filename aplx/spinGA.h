@@ -41,12 +41,8 @@
 
 // basic GA setup
 #define DEF_N_CHR               100
-#define NUM_CORES_USED				16		// assuming that all 16 cores are available
-#define TOTAL_GENES					DEF_N_CHR_PER_CORE * DEF_RASTRIGIN_ORDER * NUM_CORES_USED
-#define TOTAL_CHROMOSOMES			DEF_N_CHR_PER_CORE * NUM_CORES_USED
-#define MAX_ITER					100
-#define MIN_PARAM					-5.12
-#define MAX_PARAM					5.12
+#define NUM_CORES_USED			16		// assuming that all 16 cores are available
+#define DEF_MAX_ITER			1000
 
 // for simple simulation using Rastrigin
 #define DEF_RASTRIGIN_ORDER			2		// the dimension of the function (1..10)
@@ -60,8 +56,8 @@ typedef struct w_info {
 	ushort tAvailable;		// how many workers? should be initialized to 1
 } w_info_t;
 
-uint *chr = NULL;                      // location of current chromosomes in sdram
-uint *chrChunk = NULL;			// located in DTCM, for each worker
+static uint *chr = NULL;                      // location of current chromosomes in sdram
+static uint *chrChunk = NULL;			// located in DTCM, for each worker
 uint szChrChunk;
 uint nChr;                      // number of chromosomes
 uint nGen;                      // number of genes in a chromosomes
@@ -72,17 +68,7 @@ ushort chrIdxStart;
 ushort chrIdxEnd;
 w_info_t workers;			// will be held by leadAp
 sdp_msg_t *reportMsg;
-uint initPopCntr = 0;
-
-
-uint tik = 0;
-uint myCoreID;
-uint myCellID;
-uint genCntr = 0;
-uint prevCellPacketCntr = 0;
-uint iter = 1;
-
-REAL m, b;								// linear regression parameters
+static uint initPopCntr = 0;
 
 
 /*------------------------------ forward declaration ------------------------------*/
@@ -99,10 +85,7 @@ void initRouter();
 // GA core engine
 void initMemGA();
 void objEval();
-void getRegParam(REAL *m, REAL *b);
 void showMyChromosomes();
-void checkMyTurn(uint cellID);
-void bcastMyChromosomes(uint arg0, uint arg1);
 // Use mersenne-twister random generator
 extern void init_genrand(unsigned long s);
 extern uint genrand_int32(void);

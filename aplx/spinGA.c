@@ -6,8 +6,8 @@ void initSDP()
 {
 	spin1_callback_on(SDP_PACKET_RX, hSDP, PRIORITY_SDP);
     reportMsg->flags = 0x07;	//no reply
-    reportMsg->tag = SDP_TAG_REPLY;
-    reportMsg->srce_port = SDP_PORT_CONFIG;
+	reportMsg->tag = SDP_TAG;
+	reportMsg->srce_port = SDP_PORT;
     reportMsg->srce_addr = sv->p2p_addr;
     reportMsg->dest_port = PORT_ETH;
     reportMsg->dest_addr = sv->eth_addr;
@@ -39,7 +39,6 @@ void initRouter()
 #endif
 
     uint e, i;
-    mask = 0xFFFFFFFF;
     // individual info/cmd, assuming 17 working core
     e = rtr_alloc(17);
     if (e == 0)
@@ -69,7 +68,7 @@ void initMemGA()
     uint szChr = nChr * nGen * sizeof(uint);
     if(chr != NULL)
         sark_xfree(sv->sdram_heap, chr, ALLOC_LOCK);
-    chr = sark_xalloc(sv->sdram_heap, szChr, appID, ALLOC_LOCK);
+	chr = sark_xalloc(sv->sdram_heap, szChr, sark_app_id(), ALLOC_LOCK);
     if(chr==NULL) {
         io_printf(IO_STD, "SDRAM allocation fail!\n");
         rt_error(RTE_ABORT);
@@ -88,6 +87,11 @@ void selfSimulation()
 }
 
 void reportInitChr(uint arg0, uint arg1)
+{
+	showMyChromosomes();
+}
+
+void showMyChromosomes()
 {
 
 }
@@ -145,7 +149,7 @@ void hMCPL(uint key, uint payload)
         // send core-ID to leadAp, including leadAp itself
 		spin1_send_mc_packet(MCPL_2LEAD_PING_RPT, myCoreID, WITH_PAYLOAD);
     }
-    else if(key==MCPL_2LEAD_RPT) {
+	else if(key==MCPL_2LEAD_PING_RPT) {
         workers.wID[workers.tAvailable] = payload;
         workers.tAvailable++;
     }
@@ -202,15 +206,10 @@ void poolWorkers(uint arg0, uint arg1)
 void c_main()
 {
     myCoreID = spin1_get_core_id();
-    myCellID = myCoreID - 1;    // for c-style indexing
 
     /* Initialize system */
     unsigned long seed = (sark_chip_id () << 8) + myCoreID * sv->time_ms;
     init_genrand(seed);
-    getRegParam(&m, &b);    // if using regression
-
-    /* Generate initial population */
-    initMyChromosomes();
 
     /* Setup callbacks */
     spin1_callback_on(MCPL_PACKET_RECEIVED, hMCPL, 0);
@@ -226,7 +225,7 @@ void c_main()
         initRouter();
 
         // timer is optional, in this case, we use it to trigger simulation
-        spin1_set_timer_tick(TIMER_TICK_PERIOD);
+		spin1_set_timer_tick(TIMER_TICK_PERIOD_US);
         spin1_callback_on(TIMER_TICK, hTimer, PRIORITY_TIMER);
 
         spin1_delay_us(500000); // let workers to be settle
@@ -308,21 +307,8 @@ void objEval()
     return objVal
 
  * */
-    float objVal[TOTAL_CHROMOSOMES];
-    float fitVal[TOTAL_CHROMOSOMES];
-}
-
-void getRegParam(REAL *m, REAL *b)
-{
-    REAL M, B;
-    REAL y_min = REAL_CONST(0);
-    REAL y_max = REAL_CONST(65535);					// There'll be 65536 steps
-    REAL x_min = MIN_PARAM;
-    REAL x_max = MAX_PARAM;
-    M = (y_max - y_min) / (x_max-x_min);
-    B = (y_max) - M*x_max;							// if symmetric, b should be 0
-    *m = M;
-    *b = B;
+	//float objVal[TOTAL_CHROMOSOMES];
+	//float fitVal[TOTAL_CHROMOSOMES];
 }
 
 /* This shows how roundr() function works

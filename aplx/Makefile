@@ -25,7 +25,7 @@ SCRIPT = $(SPINN_DIRS)/lib/sark.lnk
 
 # List of objects making up the application. If there are other files
 # in the application, add their object file names to this variable.
-OBJECTS = $(APP).o
+OBJECTS = $(APP).o MT19937.o gamodel.o
 
 ifndef GNUBIN
     GNUBIN := /opt/arm-2013.05/bin
@@ -109,6 +109,14 @@ $(BUILD_DIR)$(APP).o: $(APP).c $(APP).h
 # $(BUILD_DIR)whatever.o: whatever.c
 #	$(MKDIR) $(BUILD_DIR)
 #	$(CC) $(CFLAGS) whatever.c -o $(BUILD_DIR)whatever.o
+
+MT19937.o: MT19937.c
+	@$(MKDIR) $(BUILD_DIR)
+	$(CC) $(CFLAGS) MT19937.c -o $(BUILD_DIR)MT19937.o
+
+gamodel.o: gamodel.c $(APP).h
+	@$(MKDIR) $(BUILD_DIR)
+	$(CC) $(CFLAGS) gamodel.c -o $(BUILD_DIR)gamodel.o
 
 clean:
 	@$(RM) $(BUILD_DIR)*
