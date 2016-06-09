@@ -38,24 +38,31 @@
 #define MCPL_BCAST_OBJEVAL			0xbca50007
 #define MCPL_BCAST_OBJVAL_ADDR		0xbca50008
 #define MCPL_BCAST_FITVAL_ADDR		0xbca50009
-#define MCPL_BCAST_UPDATE_CHR_CHUNK	0xbca50008	// ask worker to fetch chr from sdram
+#define MCPL_BCAST_UPDATE_CHR_CHUNK	0xbca5000A	// ask worker to fetch chr from sdram
+#define MCPL_BCAST_TFITNESS         0xbca5000B
+#define MCPL_BCAST_PROB_ADDR        0xbca5000C
 #define MCPL_2LEAD_PING_RPT			0x1ead0001	// ping reply/report
 #define MCPL_2LEAD_INITCHR_RPT		0x1ead0002	// init population complete
 #define MCPL_2LEAD_OBJEVAL_RPT		0x1ead0003	// objVal complete
+#define MCPL_2LEAD_PROB_RPT         0x1ead0004  // prob complete
+
 // key with values
 #define MCPL_2LEAD_OBJVAL		0xb0a10000	// the lower part is chromosome index
 #define MCPL_2LEAD_FITVAL		0xf1a10000
+#define MCPL_2LEAD_PROBVAL      0xab010000
 
 // memory stuffs
 #define SDRAM_TAG_CHR			0xc
 #define SDRAM_TAG_OBJVAL		0xb
 #define SDRAM_TAG_FITVAL		0xf
+#define SDRAM_TAG_PROB          0xa
 
 // basic DMA mechanisme
 #define DMA_TAG_CHRCHUNK_W		0xc1
 #define DMA_TAG_CHRCHUNK_R		0xc0
 #define DMA_TAG_OBJVAL_W		0xb1
 #define DMA_TAG_FITVAL_W		0xf1
+#define DMA_TAG_PROBVAL_W       0xa1
 
 // does leadAp also works as a worker?
 #define LEADAP_AS_WORKER		FALSE
@@ -98,10 +105,13 @@ uchar objValCntr;
 uint nIter;
 volatile uchar initPopDone;
 volatile uchar objEvalDone;
+volatile uchar probEvalDone;
 static REAL *objVal = NULL;		// each worker has its own objVal[]
 static REAL *fitVal = NULL;		// each worker has its own fitVal[]
+static REAL *prob = NULL;
 static REAL *allObjVal = NULL;	// this is located in sdram
 static REAL *allFitVal = NULL;	//
+static REAL *allProb = NULL;
 REAL TFitness;
 
 /*------------------------------ forward declaration ------------------------------*/
@@ -123,6 +133,7 @@ extern REAL objFunction(ushort nGene, uint genes[]);
 void showChromosomes(uint arg0, uint arg1);
 void showFitValues(uint arg0, uint arg1);
 void runGA(uint iter);
+void computeProb(uint arg0, uint arg1);
 
 // Use mersenne-twister random generator
 extern void init_genrand(unsigned long s);

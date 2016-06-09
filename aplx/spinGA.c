@@ -104,10 +104,19 @@ void initMemGA()
 	if(allFitVal != NULL)
 		sark_xfree(sv->sdram_heap, allFitVal, ALLOC_LOCK);
 	allFitVal = sark_xalloc(sv->sdram_heap, szMem, SDRAM_TAG_FITVAL, ALLOC_LOCK);
-	if(allObjVal==NULL) {
+    if(allFitVal==NULL) {
 		io_printf(IO_STD, "Fatal SDRAM allocation fail for SDRAM_TAG_FITVAL!\n");
 		rt_error(RTE_ABORT);
 	}
+
+    // prepare container for prob
+    if(allProb != NULL)
+        sark_xfree(sv->sdram_heap, allProb, ALLOC_LOCK);
+    allProb = sark_xalloc(sv->sdram_heap, szMem, SDRAM_TAG_PROB, ALLOC_LOCK);
+    if(allProb==NULL) {
+        io_printf(IO_STD, "Fatal SDRAM allocation fail for SDRAM_TAG_PROB!\n");
+        rt_error(RTE_ABORT);
+    }
 
 	// if OK, distribute this information to workers
 	else {
@@ -116,6 +125,7 @@ void initMemGA()
 		spin1_send_mc_packet(MCPL_BCAST_CHR_ADDR, (uint)chr, WITH_PAYLOAD);
 		spin1_send_mc_packet(MCPL_BCAST_OBJVAL_ADDR, (uint)allObjVal, WITH_PAYLOAD);
 		spin1_send_mc_packet(MCPL_BCAST_FITVAL_ADDR, (uint)allFitVal, WITH_PAYLOAD);
+        spin1_send_mc_packet(MCPL_BCAST_PROB_ADDR, (uint)allProb, WITH_PAYLOAD);
 	}
 }
 
@@ -161,7 +171,14 @@ void runGA(uint iter)
 		// do something ??
 	}
 	showFitValues(0, 0);
-	io_printf(IO_STD, "TFitness = %k\n", TFitness);
+    io_printf(IO_STD, "TFitness = %k\n", TFitness);
+    // broadcast TFitness
+    probEvalDone = FALSE;
+    uint * pTFitness = (uint *)&TFitness;
+    spin1_send_mc_packet(MCPL_BCAST_TFITNESS, *pTFitness, WITH_PAYLOAD);
+    while(probEvalDone==FALSE) {
+    }
+    //showProbValues(0,0)
 }
 
 void showChromosomes(uint arg0, uint arg1)
@@ -275,6 +292,13 @@ void hMCPL(uint key, uint payload)
 			//spin1_schedule_callback(showFitValues, 0, 0, PRIORITY_NORMAL);
 		}
 	}
+    else if((key&0xFFFF0000)==MCPL_2LEAD_FITVAL) {
+        REAL *f = (REAL *)&payload;
+        TFitness += *f;
+    }
+    else if((key&0xFFFF000)==MCPL_2LEAD_PROBVAL) {
+        //TODO: hitung cdf yang bener!!!
+    }
 	/*______________________ workers part ___________________________*/
 	else if(key==MCPL_BCAST_PING) {
 		// send core-ID to leadAp, including leadAp itself
@@ -302,14 +326,16 @@ void hMCPL(uint key, uint payload)
 		allObjVal = (REAL *)payload;
 	else if(key==MCPL_BCAST_FITVAL_ADDR)
 		allFitVal = (REAL *)payload;
+    else if(key==MCPL_BCAST_PROB_ADDR)
+        allProb = (REAL *)payload;
 	else if(key==MCPL_BCAST_OBJEVAL)
 		spin1_schedule_callback(objEval, 0, 0,PRIORITY_NORMAL);
 	else if(key==MCPL_BCAST_UPDATE_CHR_CHUNK)
 		spin1_schedule_callback(getChrChunk, 0,0, PRIORITY_NORMAL);
-	else if((key&0xFFFF0000)==MCPL_2LEAD_FITVAL) {
-		REAL *f = (REAL *)&payload;
-		TFitness += *f;
-	}
+    else if(key==MCPL_BCAST_TFITNESS) {
+        spin1_memcpy(&TFitness, &payload, sizeof(uint));
+        spin1_schedule_callback(computeProb, 0, 0, PRIORITY_NORMAL);
+    }
 }
 
 void getChrChunk(uint arg0, uint arg1)
@@ -372,10 +398,11 @@ void computeWload(uint arg0, uint arg1)
 		io_printf(IO_BUF, "@chrChunk = 0x%x\n", chrChunk);
 	}
 
+    uint szDTCMbuf = nChrChunk * sizeof(uint);
 	// then prepare DTCM memory for objVal
 	if(objVal != NULL)
 		sark_free(objVal);
-	io_printf(IO_BUF, "Will allocate DTCM %d-bytes for objVal\n", nChrChunk*sizeof(uint));
+    io_printf(IO_BUF, "Will allocate DTCM %d-bytes for objVal\n", szDTCMbuf);
 	objVal = sark_alloc(nChrChunk, sizeof(uint));
 	if(objVal == NULL) {
 //		io_printf(IO_STD, "Fatal Error allocating DTCM for objVal by core-%d\n", myCoreID);
@@ -389,7 +416,7 @@ void computeWload(uint arg0, uint arg1)
 	// then prepare DTCM for fitVal
 	if(fitVal != NULL)
 		sark_free(fitVal);
-	io_printf(IO_BUF, "Will allocate DTCM %d-bytes for fitVal\n", nChrChunk*sizeof(uint));
+    io_printf(IO_BUF, "Will allocate DTCM %d-bytes for fitVal\n", szDTCMbuf);
 	fitVal = sark_alloc(nChrChunk, sizeof(uint));
 	if(fitVal == NULL) {
 //		io_printf(IO_STD, "Fatal Error allocating DTCM for fitVal by core-%d\n", myCoreID);
@@ -400,6 +427,20 @@ void computeWload(uint arg0, uint arg1)
 		io_printf(IO_BUF, "@objVal = 0x%x\n", fitVal);
 	}
 
+    // then prepare DTCM for prob
+    if(prob != NULL)
+        sark_free(prob);
+    io_printf(IO_BUF, "Will allocate DTCM %d-bytes for prob\n", szDTCMbuf);
+    prob = sark_alloc(nChrChunk, sizeof(uint));
+    if(prob == NULL) {
+//		io_printf(IO_STD, "Fatal Error allocating DTCM for prob by core-%d\n", myCoreID);
+//		io_printf(IO_BUF, "Fatal Error allocating DTCM for prob by core-%d\n", myCoreID);
+        rt_error(RTE_ABORT);
+    }
+    else {
+        io_printf(IO_BUF, "@prob = 0x%x\n", prob);
+    }
+
 	// then automatically initialize population
 	initPopulation();
 }
@@ -408,6 +449,35 @@ void poolWorkers(uint arg0, uint arg1)
 {
     // send ping to all workers, including the leadAp :)
     spin1_send_mc_packet(MCPL_BCAST_PING, 0, WITH_PAYLOAD);
+}
+
+void computeProb(uint arg0, uint arg1)
+{
+    uint i;
+    ushort chrNum = chrIdxStart;
+    uint pv;
+    for(i=0; i<nChrChunk; i++) {
+        prob[i] = fitVal[i] / TFitness;
+        spin1_memcpy((void *)&pv, (void *)&prob[i], sizeof(uint));
+        io_printf(IO_BUF, "chr-%d -> prob = %k\n", chrIdxStart+i, prob[i]);
+        io_printf(IO_BUF, "Sending prob-%d = %k\n", chrNum, fv);
+        spin1_send_mc_packet(MCPL_2LEAD_PROBVAL + chrNum, pv, WITH_PAYLOAD);
+        chrNum++;
+    }
+    // then upload to sdram
+    io_printf(IO_BUF, "allprob = 0x%x\n", allProb);
+    uint *dest = (uint *)allProb + chrIdxStart;
+    uint szDMA = nChrChunk * sizeof(uint);
+    uint tid = spin1_dma_transfer(DMA_TAG_PROBVAL_W, (void *)dest,
+                       (void *)prob, DMA_WRITE, szDMA);
+    if(tid==0)
+        io_printf(IO_BUF, "DMA request for prob error!\n");
+    else
+        io_printf(IO_BUF, "DMA is requested for prob: tid = %d, tag = %d!\n",
+                  tid, DMA_TAG_PROBVAL_W);
+
+    // finally, tell leader that we're done objVal
+    spin1_send_mc_packet(MCPL_2LEAD_PROB_RPT, 0, WITH_PAYLOAD);
 }
 
 /*------------------------------------------------------- EVENT HANDLERS ---*/
