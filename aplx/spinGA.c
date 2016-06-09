@@ -204,22 +204,35 @@ void hMCPL(uint key, uint payload)
 // here we compute chrIdxStart and chrIdxEnd
 void computeWload(uint arg0, uint arg1)
 {
-	uint n, r;
+    uint n, r, i;
 	ushort tAvailable, wID;
+    // workload, start point, end poing
+    ushort wl[NUM_CORES_USED], sp[NUM_CORES_USED] = {0}, ep[NUM_CORES_USED];
 	tAvailable = workers.tAvailable;
-	wID = workers.wID[myCoreID];
+    wID = workers.wID[myCoreID];    // this is my working ID
 	n = nChr / tAvailable;
 	r = nChr % tAvailable;
+    // to make the remaining part more distributed rather than accumulated at one core:
+    for(i=0; i<NUM_CORES_USED; i++) {
+        wl[i] = n;
+        if(r>0) {
+            wl[i]++;
+            sp[i+1]=1;  // sama dengan sp[i+1]++;
+            r--;
+        }
+        sp[i] += i*n;
+        ep[i] = sp[i] + wl[i] - 1;
+    }
+
 	io_printf(IO_BUF, "nChr = %d, n = %d, r = %d, tAvailable = %d, wID = %d\n", 
 		nChr, n, r, tAvailable, wID);
-	chrIdxStart = wID * n;
-	chrIdxEnd = chrIdxStart + n-1;
-	if(wID==tAvailable-1)
-		chrIdxEnd += r;
+    chrIdxStart = sp[wID];
+    chrIdxEnd = ep[wID];
 	// then prepare DTCM memory
 	if(chrChunk != NULL)
 		sark_free(chrChunk);
-	szChrChunk = (chrIdxEnd - chrIdxStart + 1)*nGen;
+    //szChrChunk = (chrIdxEnd - chrIdxStart + 1)*nGen;
+    szChrChunk = wl[wID] * nGen;
 	io_printf(IO_BUF, "Will allocate DTCM %d-bytes\n", szChrChunk*sizeof(uint));
 	chrChunk = sark_alloc(szChrChunk, sizeof(uint));
 	if(chrChunk == NULL) {
@@ -290,7 +303,7 @@ void initPopulation()
 	// step-1: generate chromosomes and store in chrChunk
 	for(c=0; c<(chrIdxEnd-chrIdxStart+1); c++)
 		for(g=0; g<nGen; g++) {
-			G = genrand_fixp(minGenVal, maxGenVal, 0);
+            G = genrand_fixp(minGenVal, maxGenVal, 0);  // 0 = don't init rnd again
 			gg = bin2gray(encodeGen(G));
 			pChr[c][g] = gg;
 		}
