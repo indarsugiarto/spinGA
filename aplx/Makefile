@@ -91,11 +91,13 @@ endif
 	@$(LS) $(OUTPUT_DIR)$(APP).aplx
 
 # Build the ELF file
-$(APP).elf: $(BUILD_DIR)$(OBJECTS) $(SCRIPT) $(LIBRARY) 
+#$(APP).elf: $(OBJECTS) $(SCRIPT) $(LIBRARY)
+#$(APP).elf: $(BUILD_DIR)$(OBJECTS) $(SCRIPT) $(LIBRARY)
+$(APP).elf: $(addprefix $(BUILD_DIR),$(OBJECTS)) $(SCRIPT) $(LIBRARY)
 	@$(MKDIR) $(BUILD_DIR)
 	$(SPINN_TOOLS)/mkbuild $(APP) > $(BUILD_DIR)sark_build.c
 	$(CC) $(BUILD_DIR)sark_build.c -o $(BUILD_DIR)sark_build.o
-	$(LD) $(LFLAGS) $(addprefix $(BUILD_DIR),$(OBJECTS)) $(BUILD_DIR)sark_build.o $(LIBRARY) -o $(BUILD_DIR)$(APP).elf
+	$(LD) $(LFLAGS) $(addprefix $(BUILD_DIR),$(OBJECTS)) $(BUILD_DIR)sark_build.o $(LIBRARY) -o $(BUILD_DIR)$(APP).elf -lm
 	$(OD) $(BUILD_DIR)$(APP).elf
 
 
@@ -110,11 +112,11 @@ $(BUILD_DIR)$(APP).o: $(APP).c $(APP).h
 #	$(MKDIR) $(BUILD_DIR)
 #	$(CC) $(CFLAGS) whatever.c -o $(BUILD_DIR)whatever.o
 
-MT19937.o: MT19937.c
+$(BUILD_DIR)MT19937.o: MT19937.c
 	@$(MKDIR) $(BUILD_DIR)
 	$(CC) $(CFLAGS) MT19937.c -o $(BUILD_DIR)MT19937.o
 
-gamodel.o: gamodel.c $(APP).h
+$(BUILD_DIR)gamodel.o: gamodel.c $(APP).h
 	@$(MKDIR) $(BUILD_DIR)
 	$(CC) $(CFLAGS) gamodel.c -o $(BUILD_DIR)gamodel.o
 

@@ -97,3 +97,12 @@ II. Initial step
 II.1. each core initially generates n-chromosomes (n was sent by leadAp)
 II.2. each core evaluates its own chromosomes objective values
 II.3. each core evaluates its own chromosomes fitness
+
+
+__________________ How to use stdfix for encoding _____________________
+The idea is: we have to avoid "out of range" encoding.
+If we use regression (y=mx+b), then m and b will be ridiculously big,
+for example with [min,max]=[-6,6], then we'll end up with m=357913941.25
+and b=2147483647.5
+Hence, we'll use simple masking to limit generated gene.
+____________________________________ How to use stdfix for encoding ___

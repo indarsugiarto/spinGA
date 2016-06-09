@@ -12,15 +12,15 @@
  * I created a simple matlab in ~/Projects/Matlab/try_rastrigin.m
  * */
 
-
+#include <spin1_api.h>
 #include "spinGA.h"
 #include <stdfix.h>
 #include <math.h>
 
 REAL m, b;								// linear regression parameters
 
-/* in this example model, encodeGen() and decodeGen() use linear regression to convert
- * from real value to integer and vice versa
+/* in this example model, encodeGen() and decodeGen()
+ * don't perform any specific processing (just pass the value)
  * */
 
 /*
@@ -51,13 +51,41 @@ void getRegParam(REAL *m, REAL *b)
 }
 
 */
+
 uint encodeGen(REAL rVal)
 {
-	uint r = (uint)rVal;
+	uint r;
+	uint *ptr = (uint *)&rVal;
+	r = *ptr;
 	return r;
 }
 
 REAL decodeGen(uint gen)
 {
-	REAL r = (REAL)gen;
+	REAL r;
+	REAL *ptr = (REAL *)&gen;
+	r = *ptr;
+	return r;
+}
+
+// Since objective function is app-dependant,
+// user must define it here.
+// eg. in rastrigin 2nd order, the objFunction is
+// f(x1,x2) = 10*2 + ((x1^2 - 10*cos(2*pi*x1)) + (x2^2 - 10*cos(2*pi*x2)))
+#define USE_ABS_OBJECTIVE TRUE
+REAL objFunction(ushort nGene, uint genes[])
+{
+	REAL objVal = 10.0 * nGene;
+	REAL ciVal = REAL_CONST(10.0);
+	REAL g;
+	for(ushort i=0; i<nGene; i++) {
+		g = decodeGen(genes[i]);
+		objVal += (g*g - ciVal*cosf(2*PI*g));
+	}
+	// in rastrigin example, we might need to use absolute values
+#if (USE_ABS_OBJECTIVE==TRUE)
+	if(objVal < 0.0)
+		objVal *= -1.0;
+#endif
+	return objVal;
 }
