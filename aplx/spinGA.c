@@ -54,7 +54,7 @@ void initRouter()
             rtr_mc_set(e+i, i+1, 0xFFFFFFFF, (MC_CORE_ROUTE(i+1)));
     }
     // broadcast and toward_leader MCPL
-	e = rtr_alloc(15);
+    e = rtr_alloc(17);
     if ( e== 0)
         rt_error(RTE_ABORT);
     else {
@@ -74,6 +74,8 @@ void initRouter()
 		rtr_mc_set(e+12, MCPL_BCAST_UPDATE_CHR_CHUNK, 0xFFFFFFFF, allRoute);
 		rtr_mc_set(e+13, MCPL_BCAST_OBJVAL_ADDR, 0xFFFFFFFF, allRoute);
 		rtr_mc_set(e+14, MCPL_BCAST_FITVAL_ADDR, 0xFFFFFFFF, allRoute);
+        rtr_mc_set(e+15, MCPL_2LEAD_PROBVAL, 0xFFFF0000, leader);
+        rtr_mc_set(e+16, MCPL_2LEAD_PROB_RPT, 0xFFFFFFFF, leader);
     }
 }
 
@@ -118,6 +120,11 @@ void initMemGA()
         rt_error(RTE_ABORT);
     }
 
+    // prepare container for cdf
+    if(cdf != NULL)
+        sark_free(cdf);
+    cdf = sark_alloc(nChr, sizeof(uint));
+
 	// if OK, distribute this information to workers
 	else {
 		io_printf(IO_STD, "@chr = 0x%x, @allobjVal = 0x%x, @allfitVal = 0x%x\n",
@@ -158,7 +165,8 @@ void runGA(uint iter)
 	initPopDone = FALSE;
 	initPopCntr = 0;
 	spin1_send_mc_packet(MCPL_BCAST_EOC, 0, WITH_PAYLOAD);
-	// wait until pop init done
+
+    // wait until pop init done
 	while(initPopDone==FALSE) {
 		// do something ??
 	}
@@ -172,13 +180,46 @@ void runGA(uint iter)
 	}
 	showFitValues(0, 0);
     io_printf(IO_STD, "TFitness = %k\n", TFitness);
-    // broadcast TFitness
+
+    // broadcast TFitness and trigger probability computation in workers
     probEvalDone = FALSE;
+    probValCntr = 0;
     uint * pTFitness = (uint *)&TFitness;
     spin1_send_mc_packet(MCPL_BCAST_TFITNESS, *pTFitness, WITH_PAYLOAD);
     while(probEvalDone==FALSE) {
     }
-    //showProbValues(0,0)
+
+    // then accumulate probabilities into cdf
+    dmaGetProbDone = FALSE;
+    probBuf = sark_alloc(nChr, sizeof(uint));
+    uint tid = spin1_dma_transfer(DMA_TAG_GETPROB_R, (void *)allProb,
+                                  (void *)probBuf, DMA_READ, nChr*sizeof(uint));
+    if(tid==0) {
+        io_printf(IO_STD, "DMA request for prob error!\n");
+        rt_error(RTE_ABORT);
+    }
+    while(dmaGetProbDone==FALSE) {
+    }
+    uint i, j;
+    for(i=0; n<nChr; i++) {
+        cdf[i] = 0.0;
+        for(j=0; j<(i+1); j++)
+            cdf[i] += probBuf[i];
+    }
+    showProbValues(0,0);
+    sark_free(probBuf);
+
+    // then doSelection
+}
+
+// when showProbValues() is called, make sure that probBuf is not freed yet!!!
+void showProbValues(uint arg0, uint arg1)
+{
+    io_printf(IO_STD, "Probability values:\n-------------------\n");
+    for(uint i=0; i<nChr; i++) {
+        io_printf(IO_STD,"p(%d) = %k, cdf(%d) = %k\n",
+                  i, probBuf[i], i, cdf[i]);
+    }
 }
 
 void showChromosomes(uint arg0, uint arg1)
@@ -266,6 +307,9 @@ void hDMADone(uint tid, uint tag)
 	if(tag==DMA_TAG_CHRCHUNK_W) {
 		spin1_send_mc_packet(MCPL_2LEAD_INITCHR_RPT, myCoreID, WITH_PAYLOAD);
 	}
+    else if(tag==DMA_TAG_GETPROB_R) {
+        dmaGetProbDone = TRUE;
+    }
 }
 
 void hMCPL(uint key, uint payload)
@@ -295,6 +339,12 @@ void hMCPL(uint key, uint payload)
     else if((key&0xFFFF0000)==MCPL_2LEAD_FITVAL) {
         REAL *f = (REAL *)&payload;
         TFitness += *f;
+    }
+    else if(key==MCPL_2LEAD_PROB_RPT) {
+        probValCntr++;
+        if(probValCntr==workers.tAvailable) {
+            probEvalDone = TRUE;
+        }
     }
     else if((key&0xFFFF000)==MCPL_2LEAD_PROBVAL) {
         //TODO: hitung cdf yang bener!!!

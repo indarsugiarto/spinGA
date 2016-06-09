@@ -63,6 +63,7 @@
 #define DMA_TAG_OBJVAL_W		0xb1
 #define DMA_TAG_FITVAL_W		0xf1
 #define DMA_TAG_PROBVAL_W       0xa1
+#define DMA_TAG_GETPROB_R       0xa0
 
 // does leadAp also works as a worker?
 #define LEADAP_AS_WORKER		FALSE
@@ -102,16 +103,20 @@ w_info_t workers;			// will be held by leadAp
 sdp_msg_t *reportMsg;
 uchar initPopCntr;	// to count, how many workers have finished pop init
 uchar objValCntr;
+uchar probValCntr;
 uint nIter;
 volatile uchar initPopDone;
 volatile uchar objEvalDone;
 volatile uchar probEvalDone;
+volatile uchar dmaGetProbDone;
 static REAL *objVal = NULL;		// each worker has its own objVal[]
 static REAL *fitVal = NULL;		// each worker has its own fitVal[]
 static REAL *prob = NULL;
 static REAL *allObjVal = NULL;	// this is located in sdram
 static REAL *allFitVal = NULL;	//
 static REAL *allProb = NULL;
+static REAL *cdf = NULL;
+REAL *probBuf;
 REAL TFitness;
 
 /*------------------------------ forward declaration ------------------------------*/
@@ -130,8 +135,6 @@ void initRouter();
 void initMemGA();
 void objEval(uint arg0, uint arg1);
 extern REAL objFunction(ushort nGene, uint genes[]);
-void showChromosomes(uint arg0, uint arg1);
-void showFitValues(uint arg0, uint arg1);
 void runGA(uint iter);
 void computeProb(uint arg0, uint arg1);
 
@@ -147,6 +150,9 @@ void initPopulation();
 uint bin2gray(uint num);
 uint gray2bin(uint num);
 REAL roundr(REAL inVal);
+void showProbValues(uint arg0, uint arg1);
+void showChromosomes(uint arg0, uint arg1);
+void showFitValues(uint arg0, uint arg1);
 
 #endif // SPINGA_H
 
