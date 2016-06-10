@@ -68,6 +68,21 @@ REAL decodeGen(uint gen)
 	return r;
 }
 
+// doSelection() is a core part and will be called by runGA()
+// here, you can change the selection mechanism
+// one default selection mechanism is defRouletteWheel()
+void doSelection(uint arg0, uint arg1)
+{
+	defRouletteWheel(arg0, arg1);
+	//myOwnSelection(uint param1, uint param2);
+}
+
+// define your own selection mechanism here
+void myOwnSelection(uint arg0, uint arg1)
+{
+
+}
+
 // Since objective function is app-dependant,
 // user must define it here.
 // eg. in rastrigin 2nd order, the objFunction is
@@ -88,4 +103,39 @@ REAL objFunction(ushort nGene, uint genes[])
 		objVal *= -1.0;
 #endif
 	return objVal;
+}
+
+// in doCrossoever(), arg0 is crossover rate (as REAL), and arg1 is
+// the pointer to the selectedChr (result from previous doSelection())
+// common crossover mechanisms:
+// -single point
+// -two points
+// -uniform
+// -cut/slice, arithmetic, etc. --> not used here
+// in the following doCrossover(), user just need to define
+// parent-1, parent-2 and the mode, then call cross()
+void doCrossover(uint cRate, uint selChr)
+{
+	ushort *selectedChr = (ushort *)selChr;
+	// here is example of 1 point crossover
+	// hence, no need to spread 0xc503xxxx
+	REAL rv;
+	REAL rhoC = (REAL)cRate;
+	ushort nSelectedChr = nChr; // this reflects the number of individual in *selectedChr
+	ushort parent[2];
+	ushort p1,p2;
+	for(p1=0; p1<nSelectedChr; p1++) {
+		rv = genrand_fixp(0.0, 1.0, 0);
+		if(rv < rhoC) {
+			parent[0] = selectedChr[p1];
+			p2 = parent[0];
+			// make sure that no self-crossing
+			while(p2==parent[0]) {
+				p2 = genrand_ushort(0, nSelectedChr, 0);
+				p2 = selectedChr[p2];
+			}
+			parent[1] = p2;
+			cross(parent, CP_MODE_SINGLE);
+		}
+	}
 }

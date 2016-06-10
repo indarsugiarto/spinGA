@@ -158,4 +158,11 @@ REAL genrand_fixp(REAL minVal, REAL maxVal, uint seed)
 	return result;
 }
 
+// Indar: generate random value with short range
+// source: http://c-faq.com/lib/randrange.html
+ushort genrand_ushort(ushort min, ushort max, uint seed)
+{
+	uint r = min + genrand_int32() / (RAND_MAX_UINT / (max - min + 1) + 1);
+	return (ushort)r;
+}
 

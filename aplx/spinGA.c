@@ -41,20 +41,22 @@ void initRouter()
 	allRoute &= ~leader;
 #endif
 
-    uint e, i;
+	uint e, i, key;
     // individual info/cmd, assuming 17 working core
 	e = rtr_alloc(NUM_CORES_USED);
     if (e == 0)
         rt_error(RTE_ABORT);
     else {
         // each destination core might have its own key association
-        // so that leadAp can tell each worker, which region is their part
-		for(i=0; i<NUM_CORES_USED; i++)
+		// so that leadAp can address each worker directly
+		for(i=0; i<NUM_CORES_USED; i++) {
+			key = (i+1) << 24;
             // starting from core-1 up to core-17
-            rtr_mc_set(e+i, i+1, 0xFFFFFFFF, (MC_CORE_ROUTE(i+1)));
+			rtr_mc_set(e+i, key, MCPL_DIRECT_BASE_MASK, (MC_CORE_ROUTE(i+1)));
+		}
     }
     // broadcast and toward_leader MCPL
-    e = rtr_alloc(17);
+	e = rtr_alloc(18);
     if ( e== 0)
         rt_error(RTE_ABORT);
     else {
@@ -76,13 +78,14 @@ void initRouter()
 		rtr_mc_set(e+14, MCPL_BCAST_FITVAL_ADDR, 0xFFFFFFFF, allRoute);
         rtr_mc_set(e+15, MCPL_2LEAD_PROBVAL, 0xFFFF0000, leader);
         rtr_mc_set(e+16, MCPL_2LEAD_PROB_RPT, 0xFFFFFFFF, leader);
+		rtr_mc_set(e+17, MCPL_BCAST_CROSS_PAR, 0xFFFF0000, allRoute);
     }
 }
 
 // initGA() will allocate memory in SDRAM to hold chromosomes
 void initMemGA()
 {
-	// prepare container for chromosomes
+	// prepare container for current chromosomes
 	uint szMem = nChr * nGen * sizeof(uint);
     if(chr != NULL)
         sark_xfree(sv->sdram_heap, chr, ALLOC_LOCK);
@@ -91,6 +94,16 @@ void initMemGA()
 		io_printf(IO_STD, "Fatal SDRAM allocation fail for SDRAM_TAG_CHR!\n");
         rt_error(RTE_ABORT);
     }
+
+	// prepare container for new population/new generation
+	if(newChr != NULL)
+		sark_xfree(sv->sdram_heap, newChr, ALLOC_LOCK);
+	newChr = sark_xalloc(sv->sdram_heap, szMem, SDRAM_TAG_NEWCHR, ALLOC_LOCK);
+	if(newChr==NULL) {
+		io_printf(IO_STD, "Fatal SDRAM allocation fail for SDRAM_TAG_NEWCHR!\n");
+		rt_error(RTE_ABORT);
+	}
+	tNewGen = 0;
 
 	// prepare container for objValues
 	szMem = nChr * sizeof(uint);
@@ -125,11 +138,21 @@ void initMemGA()
         sark_free(cdf);
     cdf = sark_alloc(nChr, sizeof(uint));
 
+	// prepare roulette wheel result
+	if(selectedChr != NULL)
+		sark_free(selectedChr);
+	selectedChr = sark_alloc(nChr, sizeof(ushort));
+	if(selectedChr==NULL) {
+		io_printf(IO_STD, "Fatal DTCM for allocating selectedChr!\n");
+		rt_error(RTE_ABORT);
+	}
+
 	// if OK, distribute this information to workers
 	else {
 		io_printf(IO_STD, "@chr = 0x%x, @allobjVal = 0x%x, @allfitVal = 0x%x\n",
 				  chr, allObjVal, allFitVal);
 		spin1_send_mc_packet(MCPL_BCAST_CHR_ADDR, (uint)chr, WITH_PAYLOAD);
+		spin1_send_mc_packet(MCPL_BCAST_NEWCHR_ADDR, (uint)newChr, WITH_PAYLOAD);
 		spin1_send_mc_packet(MCPL_BCAST_OBJVAL_ADDR, (uint)allObjVal, WITH_PAYLOAD);
 		spin1_send_mc_packet(MCPL_BCAST_FITVAL_ADDR, (uint)allFitVal, WITH_PAYLOAD);
         spin1_send_mc_packet(MCPL_BCAST_PROB_ADDR, (uint)allProb, WITH_PAYLOAD);
@@ -146,6 +169,7 @@ void selfSimulation()
 	minGenVal = DEF_RASTRIGIN_MINVAL;
 	maxGenVal = DEF_RASTRIGIN_MAXVAL;
 	nIter = DEF_MAX_ITER;
+	nElite = 0;	// no elitism
 
 	// prepare memory allocation for chromosomes
 	// inside initMemGA(), chr address is distributed!
@@ -161,6 +185,7 @@ void selfSimulation()
 
 void runGA(uint iter)
 {
+	uint i, j;
 	// step1: send notification to start initializing population
 	initPopDone = FALSE;
 	initPopCntr = 0;
@@ -198,18 +223,34 @@ void runGA(uint iter)
         io_printf(IO_STD, "DMA request for prob error!\n");
         rt_error(RTE_ABORT);
     }
+	REAL *rv = sark_alloc(nChr, sizeof(uint)); // random values for roulette wheel
+	uchar rngTriggered = FALSE;
     while(dmaGetProbDone==FALSE) {
+		// while waiting for dma to completed, let's generate rv for roulette wheel
+		rngTriggered = TRUE;
+		for(i=0; i<nChr; i++)
+			rv[i] = genrand_fixp(0.0, 1.0, 0);
     }
-    uint i, j;
-    for(i=0; n<nChr; i++) {
+	if(rngTriggered==FALSE)	// if dma is completed before generating rv
+		for(i=0; i<nChr; i++)
+			rv[i] = genrand_fixp(0.0, 1.0, 0);
+
+	for(i=0; i<nChr; i++) {
         cdf[i] = 0.0;
         for(j=0; j<(i+1); j++)
             cdf[i] += probBuf[i];
     }
     showProbValues(0,0);
-    sark_free(probBuf);
 
-    // then doSelection
+	// call selection procedure
+	doSelection((uint)rv, 0);
+	sark_free(probBuf);
+	sark_free(rv);
+
+	// then do crossover
+	// TODO: special for elite, put them directly into the new generation pool
+	// Note: in addition, those elite also undergo crossover operation!!!
+	doCrossover((uint)cRate, (uint)selectedChr);
 }
 
 // when showProbValues() is called, make sure that probBuf is not freed yet!!!
@@ -278,11 +319,14 @@ void hTimer(uint tick, uint Unused)
 	// payload.low = wID
     else if(tick==3) {
 		io_printf(IO_STD, "Broadcasting wIDs\n");
-		uint payload;
+		uint key, payload;
 		for(uint i=0; i<workers.tAvailable; i++) {
 			io_printf(IO_STD, "wID core-%d = %d\n", workers.wID[i], i);
+			// key.high = coreID, key.low = 0
+			key = workers.wID[i] << 24;
+			// payload.high = tAvailable, payload.low = wID
 			payload = (workers.tAvailable << 16) + i;
-			spin1_send_mc_packet(workers.wID[i], payload, WITH_PAYLOAD);
+			spin1_send_mc_packet(key, payload, WITH_PAYLOAD);
         }
     }
 	else if(tick==4) {
@@ -347,17 +391,25 @@ void hMCPL(uint key, uint payload)
         }
     }
     else if((key&0xFFFF000)==MCPL_2LEAD_PROBVAL) {
-        //TODO: hitung cdf yang bener!!!
+		// TODO: hitung cdf yang bener!!!
+		// masalahnya, apa yang akan terjadi jika ada core yang mati?
+		// makanya, sementara ini tidak pakai cara broadcasting ini
+		// untuk mengumpulkan cdf
     }
 	/*______________________ workers part ___________________________*/
 	else if(key==MCPL_BCAST_PING) {
 		// send core-ID to leadAp, including leadAp itself
 		spin1_send_mc_packet(MCPL_2LEAD_PING_RPT, myCoreID, WITH_PAYLOAD);
 	}
-    // all cores will receives the following wID
-    else if(key==myCoreID) {
-		workers.tAvailable = payload >> 16;
-		workers.wID[myCoreID] = payload & 0xFFFF;
+	// if a core is addressed directly
+	else if((key>>24)==myCoreID) {
+		if((key&0xFFFF)==0) {
+			// all cores will receives the following wID
+			workers.tAvailable = payload >> 16;
+			workers.wID[myCoreID] = payload & 0xFFFF;
+		}
+		else if((key&0xFFFF)==CP_MODE_SINGLE)
+			spin1_schedule_callback(execCross, key, payload, PRIORITY_NORMAL);
 	}
 	else if(key==MCPL_BCAST_NCHRGEN) {
 		nGen = payload & 0xFFFF;
@@ -372,6 +424,8 @@ void hMCPL(uint key, uint payload)
 		spin1_schedule_callback(computeWload, 0, 0, PRIORITY_NORMAL);
 	else if(key==MCPL_BCAST_CHR_ADDR)
 		chr = (uint *)payload;
+	else if(key==MCPL_BCAST_NEWCHR_ADDR)
+		newChr = (uint *)payload;
 	else if(key==MCPL_BCAST_OBJVAL_ADDR)
 		allObjVal = (REAL *)payload;
 	else if(key==MCPL_BCAST_FITVAL_ADDR)
@@ -385,7 +439,10 @@ void hMCPL(uint key, uint payload)
     else if(key==MCPL_BCAST_TFITNESS) {
         spin1_memcpy(&TFitness, &payload, sizeof(uint));
         spin1_schedule_callback(computeProb, 0, 0, PRIORITY_NORMAL);
-    }
+	}
+	else if((key&0xFFFF0000)==MCPL_BCAST_CROSS_PAR) {
+		//TODO: habis makan!
+	}
 }
 
 void getChrChunk(uint arg0, uint arg1)
@@ -501,6 +558,7 @@ void poolWorkers(uint arg0, uint arg1)
     spin1_send_mc_packet(MCPL_BCAST_PING, 0, WITH_PAYLOAD);
 }
 
+// computeProb() will be call if worker receives broadcasted TFitness
 void computeProb(uint arg0, uint arg1)
 {
     uint i;
@@ -510,9 +568,11 @@ void computeProb(uint arg0, uint arg1)
         prob[i] = fitVal[i] / TFitness;
         spin1_memcpy((void *)&pv, (void *)&prob[i], sizeof(uint));
         io_printf(IO_BUF, "chr-%d -> prob = %k\n", chrIdxStart+i, prob[i]);
-        io_printf(IO_BUF, "Sending prob-%d = %k\n", chrNum, fv);
+		/*
+		io_printf(IO_BUF, "Sending prob-%d = %k\n", chrNum, prob[i]);
         spin1_send_mc_packet(MCPL_2LEAD_PROBVAL + chrNum, pv, WITH_PAYLOAD);
         chrNum++;
+		*/
     }
     // then upload to sdram
     io_printf(IO_BUF, "allprob = 0x%x\n", allProb);
@@ -550,6 +610,7 @@ void c_main()
         initSDP();
 
         workers.tAvailable = 0;
+		workers.lp = 0;
 
         io_printf(IO_BUF, "Initializing router...\n");
         //io_printf(IO_STD, "The leader core is %u\n", myCoreID);
@@ -632,6 +693,50 @@ void initPopulation()
 	*/
 }
 
+// cross() will be called by and its main task is to broadcast message to workers
+// key = 0xc502xxxx, payload=ffffmmmm,
+// xxxx = num of cp, ffff (father), mmmm (mother)
+// key = 0xc503yyyy, payload=zzzzuuuu
+// yyyy is cp-indexer, zzzz, uuuu are the points (cp values)
+// if *CP is NULL, then the cross-point will be calculated here
+void cross(ushort p[2], uint mode)
+{
+	uint key, parent;
+	spin1_memcpy(&parent, p, sizeof(uint));
+	// who's the next worker to be activated?
+	key = (workers.wID[workers.lp] << 24) + mode;
+	workers.lp++;
+	// create a ring counter
+	if(workers.lp==workers.tAvailable)
+		workers.lp = 0;
+	// send to the worker
+	spin1_send_mc_packet(key, parent, WITH_PAYLOAD);
+}
+
+// execCross() is worker's code for doing crossover operation
+// arg0 contains mode, arg1 contains parents
+// Note:
+// - at this point, worker should already know where the newChr is
+void execCross(uint arg0, uint arg1)
+{
+	ushort p[2];
+	ushort mode = arg0 & 0xFFFF;
+	ushort nBits = getChrBitLength();
+	spin1_memcpy(p, &arg1, sizeof(uint));
+	if(mode==CP_MODE_SINGLE) {
+		// TODO: how to make sure that the crossover point is
+		// within allowed bit range?
+		ushort cp = genrand_ushort(0, nBits, 0);
+	}
+	else if(mode==CP_MODE_DOUBLE) {
+		ushort cp[2];
+		cp[0] = genrand_ushort(0, getChrBitLength(), 0);
+		cp[1] = genrand_ushort(cp[0], nBits, 0);
+	}
+	else if(mode==CP_MODE_UNIFORM) {
+	}
+}
+
 // objEval() is a callback that will be called if worker receives MCPL_BCAST_OBJEVAL
 void objEval(uint arg0, uint arg1)
 {
@@ -661,6 +766,9 @@ void objEval(uint arg0, uint arg1)
 		spin1_send_mc_packet(MCPL_2LEAD_FITVAL + chrNum, *pfv, WITH_PAYLOAD);
 		chrNum++;
 	}
+
+	// TODO: implement elitism and spread to workers
+
 	// then upload to sdram
 	io_printf(IO_BUF, "allobjval = 0x%x, allfitval = 0x%x\n", allObjVal, allFitVal);
 	uint *dest = (uint *)allObjVal + chrIdxStart;
@@ -747,6 +855,21 @@ void objEval(uint arg0, uint arg1)
 	//float fitVal[TOTAL_CHROMOSOMES];
 }
 
+// defRouletteWheel will use *cdf, temporary *rv and *selectedChr
+// *rv is created during runGA and passed as arg0 by doSelection()
+void defRouletteWheel(uint arg0, uint arg1)
+{
+	REAL *rv = (REAL *)arg0;
+	ushort rvCntr, cdfCntr;	// because selectedChr is ushort[]
+	for(rvCntr=0; rvCntr<nChr; rvCntr++) {
+		for(cdfCntr=0; cdfCntr<nChr; cdfCntr++)
+			if(cdf[cdfCntr] > rv[rvCntr]) {
+				selectedChr[rvCntr] = cdfCntr;
+				break;	// skip cdfCntr and continue with rvCntr
+			}
+	}
+}
+
 
 /* This shows how roundr() function works
 int main()
@@ -793,4 +916,10 @@ uint gray2bin(uint num)
     num = num ^ (num >> 1);
     return num;
 }
+
+inline ushort getChrBitLength()
+{
+	return nGen * 32;
+}
+
 /*_______________________________________________ Helper functions _*/
