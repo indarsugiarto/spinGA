@@ -725,9 +725,15 @@ void execCross(uint arg0, uint arg1)
 	spin1_memcpy(p, &arg1, sizeof(uint));
 	if(mode==CP_MODE_SINGLE) {
 		// TODO: how to make sure that the crossover point is
-		// within allowed bit range?
+        // within allowed bit range? -> use regression!!!
 		ushort cp = genrand_ushort(0, nBits, 0);
-	}
+        // prepare two children
+        uint *c1 = sark_alloc(nGen, sizeof(uint));
+        uint *c2 = sark_alloc(nGen, sizeof(uint));
+        // TODO: are the parent in chrChunk?
+        uint *p1, *p2;
+        // if(p[0]>=chrIdxStart && p[0]<=chrIdxEnd)
+    }
 	else if(mode==CP_MODE_DOUBLE) {
 		ushort cp[2];
 		cp[0] = genrand_ushort(0, getChrBitLength(), 0);
