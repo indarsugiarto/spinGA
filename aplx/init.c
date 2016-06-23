@@ -44,28 +44,31 @@ void initRouter()
 		rt_error(RTE_ABORT);
 	else {
 		// broadcasted keys: 12
-		rtr_mc_set(e, MCPL_BCAST_PING, 0xFFFFFFFF, allRoute); e++;
-		rtr_mc_set(e, MCPL_BCAST_CHR_ADDR, 0xFFFFFFFF, allRoute); e++;
-		rtr_mc_set(e, MCPL_BCAST_NEWCHR_ADDR, 0xFFFFFFFF, allRoute); e++;
-		rtr_mc_set(e, MCPL_BCAST_OBJVAL_ADDR, 0xFFFFFFFF, allRoute); e++;
-		rtr_mc_set(e, MCPL_BCAST_FITVAL_ADDR, 0xFFFFFFFF, allRoute); e++;
-		rtr_mc_set(e, MCPL_BCAST_NCHRGEN, 0xFFFFFFFF, allRoute); e++;
-		rtr_mc_set(e, MCPL_BCAST_MINVAL, 0xFFFFFFFF, allRoute); e++;
-		rtr_mc_set(e, MCPL_BCAST_MAXVAL, 0xFFFFFFFF, allRoute); e++;
-		rtr_mc_set(e, MCPL_BCAST_EOC, 0xFFFFFFFF, allRoute); e++;
-		rtr_mc_set(e, MCPL_BCAST_OBJEVAL, 0xFFFFFFFF, allRoute); e++;
-		rtr_mc_set(e, MCPL_BCAST_TFITNESS, 0xFFFFFFFF, allRoute); e++;
-		rtr_mc_set(e, MCPL_BCAST_UPDATE_CHR_CHUNK, 0xFFFFFFFF, allRoute); e++;
-		rtr_mc_set(e, MCPL_BCAST_CROSS_PAR, 0xFFFF0000, allRoute); e++;
-		// to leadAp keys: 7
-		rtr_mc_set(e, MCPL_2LEAD_PING_RPT, 0xFFFFFFFF, leader); e++;
-		rtr_mc_set(e, MCPL_2LEAD_INITCHR_RPT, 0xFFFFFFFF, leader); e++;
-		rtr_mc_set(e, MCPL_2LEAD_OBJEVAL_RPT, 0xFFFFFFFF, leader); e++;
-		rtr_mc_set(e, MCPL_2LEAD_OBJVAL, 0xFFFFFFFF, leader); e++;
-		rtr_mc_set(e, MCPL_2LEAD_FITVAL, 0xFFFFFFFF, leader); e++;
-		rtr_mc_set(e, MCPL_2LEAD_PROBVAL, 0xFFFFFFFF, leader); e++;
-		rtr_mc_set(e, MCPL_2LEAD_PROB_RPT, 0xFFFFFFFF, leader); e++;
+		rtr_mc_set(e, MCPL_BCAST_PING,				0xFFFFFFFF, allRoute); e++;
+		rtr_mc_set(e, MCPL_BCAST_CHR_ADDR,			0xFFFFFFFF, allRoute); e++;
+		rtr_mc_set(e, MCPL_BCAST_NEWCHR_ADDR,		0xFFFFFFFF, allRoute); e++;
+		rtr_mc_set(e, MCPL_BCAST_OBJVAL_ADDR,		0xFFFFFFFF, allRoute); e++;
+		rtr_mc_set(e, MCPL_BCAST_FITVAL_ADDR,		0xFFFFFFFF, allRoute); e++;
+		rtr_mc_set(e, MCPL_BCAST_NCHRGEN,			0xFFFFFFFF, allRoute); e++;
+		rtr_mc_set(e, MCPL_BCAST_MINVAL,			0xFFFFFFFF, allRoute); e++;
+		rtr_mc_set(e, MCPL_BCAST_MAXVAL,			0xFFFFFFFF, allRoute); e++;
+		rtr_mc_set(e, MCPL_BCAST_EOC,				0xFFFFFFFF, allRoute); e++;
+		rtr_mc_set(e, MCPL_BCAST_OBJEVAL,			0xFFFFFFFF, allRoute); e++;
+		rtr_mc_set(e, MCPL_BCAST_TFITNESS,			0xFFFFFFFF, allRoute); e++;
+		rtr_mc_set(e, MCPL_BCAST_UPDATE_CHR_CHUNK,	0xFFFFFFFF, allRoute); e++;
+		rtr_mc_set(e, MCPL_BCAST_CROSS_PAR,			0xFFFF0000, allRoute); e++;
+		// to leadAp keys: 8
+		rtr_mc_set(e, MCPL_2LEAD_PING_RPT,			0xFFFFFFFF, leader); e++;
+		rtr_mc_set(e, MCPL_2LEAD_INITCHR_RPT,		0xFFFFFFFF, leader); e++;
+		rtr_mc_set(e, MCPL_2LEAD_OBJEVAL_RPT,		0xFFFFFFFF, leader); e++;
+		rtr_mc_set(e, MCPL_2LEAD_OBJVAL,			0xFFFFFFFF, leader); e++;
+		rtr_mc_set(e, MCPL_2LEAD_FITVAL,			0xFFFFFFFF, leader); e++;
+		rtr_mc_set(e, MCPL_2LEAD_PROB_RPT,			0xFFFFFFFF, leader); e++;
+		rtr_mc_set(e, MCPL_2LEAD_BEST_CHR,			0xFFFFFFFF, leader); e++;
 	}
+
+	// TODO: broadcast emigrants out of the chip
+
 }
 
 // initGA() will allocate memory in SDRAM to hold chromosomes
@@ -73,7 +76,7 @@ void initMemGA()
 {
 	if(leadAp) {
 		// prepare container for current chromosomes
-		uint szMem = nChr * nGen * sizeof(uint);
+		uint szMem = gaParams.nChr * gaParams.nGen * sizeof(uint);
 		if(chr != NULL)
 			sark_xfree(sv->sdram_heap, chr, ALLOC_LOCK);
 		chr = sark_xalloc(sv->sdram_heap, szMem, SDRAM_TAG_CHR, ALLOC_LOCK);
@@ -125,7 +128,10 @@ void initMemGA()
 			sark_free(cdf);
 		cdf = sark_alloc(nChr, sizeof(uint));
 
-		// prepare roulette wheel result in DTCM of leadAp
+		// prepare random values and roulette wheel result in DTCM of leadAp
+		if(rv != NULL)
+			sark_free(rv);
+		rv = sark_alloc(gaParams.nChr, sizeof(uint)); // random values for roulette wheel
 		if(selectedChr != NULL)
 			sark_free(selectedChr);
 		selectedChr = sark_alloc(nChr, sizeof(ushort));
@@ -134,18 +140,40 @@ void initMemGA()
 			rt_error(RTE_ABORT);
 		}
 
-		// if OK, distribute this information to workers
-		else {
-			io_printf(IO_BUF, "@chr = 0x%x, @allobjVal = 0x%x, @allfitVal = 0x%x, @allProb = 0x%x\n",
-					  chr, allObjVal, allFitVal, allProb);
-			spin1_send_mc_packet(MCPL_BCAST_CHR_ADDR, (uint)chr, WITH_PAYLOAD);
-			spin1_send_mc_packet(MCPL_BCAST_NEWCHR_ADDR, (uint)newChr, WITH_PAYLOAD);
-			spin1_send_mc_packet(MCPL_BCAST_OBJVAL_ADDR, (uint)allObjVal, WITH_PAYLOAD);
-			spin1_send_mc_packet(MCPL_BCAST_FITVAL_ADDR, (uint)allFitVal, WITH_PAYLOAD);
-			spin1_send_mc_packet(MCPL_BCAST_PROB_ADDR, (uint)allProb, WITH_PAYLOAD);
-		}
+		// distribute this information to workers
+		io_printf(IO_BUF, "@chr = 0x%x, @allobjVal = 0x%x, @allfitVal = 0x%x, @allProb = 0x%x\n",
+				  chr, allObjVal, allFitVal, allProb);
+		spin1_send_mc_packet(MCPL_BCAST_CHR_ADDR, (uint)chr, WITH_PAYLOAD);
+		spin1_send_mc_packet(MCPL_BCAST_NEWCHR_ADDR, (uint)newChr, WITH_PAYLOAD);
+		spin1_send_mc_packet(MCPL_BCAST_OBJVAL_ADDR, (uint)allObjVal, WITH_PAYLOAD);
+		spin1_send_mc_packet(MCPL_BCAST_FITVAL_ADDR, (uint)allFitVal, WITH_PAYLOAD);
+		spin1_send_mc_packet(MCPL_BCAST_PROB_ADDR, (uint)allProb, WITH_PAYLOAD);
 	}
 }
+
+// this is the opposite of initMemGA()
+void releaseMemGA()
+{
+	if(leadAp) {
+		if(chr != NULL)
+			sark_xfree(sv->sdram_heap, chr, ALLOC_LOCK);
+		if(newChr != NULL)
+			sark_xfree(sv->sdram_heap, newChr, ALLOC_LOCK);
+		if(allObjVal != NULL)
+			sark_xfree(sv->sdram_heap, allObjVal, ALLOC_LOCK);
+		if(allFitVal != NULL)
+			sark_xfree(sv->sdram_heap, allFitVal, ALLOC_LOCK);
+		if(allProb != NULL)
+			sark_xfree(sv->sdram_heap, allProb, ALLOC_LOCK);
+		if(cdf != NULL)
+			sark_free(cdf);
+		if(selectedChr != NULL)
+			sark_free(selectedChr);
+		if(rv != NULL)
+			sark_free(rv);
+	}
+}
+
 
 void initPopulation()
 {

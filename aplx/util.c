@@ -16,6 +16,14 @@ inline REAL getREALFromUint(uint u)
 	return r;
 }
 
+inline void generateRV()
+{
+	if(nRV < gaParams.nChr) {
+		rv[nRV] = genrand_fixp(0.0, 1.0, 0);
+		nRV++;
+	}
+}
+
 // use showChromosomes() to display current chromosomes
 void showChromosomes(uint arg0, uint arg1)
 {
@@ -28,7 +36,7 @@ void showChromosomes(uint arg0, uint arg1)
 	if(!leadAp) {
 		io_printf(IO_BUF, "Population in wID-%d:\n-------------------\n", workers.wID);
 		for(c=0; c<workers.nChrChunk; c++) {
-			io_printf(IO_BUF, "Chr - %d: ", workers.chrIdxStart+c);
+			io_printf(IO_BUF, "Chr-%d: ", workers.chrIdxStart+c);
 			for(g=0; g<gaParams.nGen; g++) {
 				eG = *pChr; pChr++;
 				G = decodeGen(eG);
@@ -42,7 +50,7 @@ void showChromosomes(uint arg0, uint arg1)
 		pChr = chr;
 		io_printf(IO_BUF, "Total populations\n----------------------\n");
 		for(c=0; c<gaParams.nChr; c++) {
-			io_printf(IO_BUF, "Chr - %d: ", c);
+			io_printf(IO_BUF, "Chr-%d: ", c);
 			for(g=0; g<gaParams.nGen; g++) {
 				eG = *pChr; pChr++;
 				G = decodeGen(eG);
@@ -61,13 +69,13 @@ void showObjFitValues(uint arg0, uint arg1)
 	io_printf(IO_BUF, "Objective and Fitness values:\n-----------------------------------\n");
 	if(!leadAp) {
 		for(c=0; c<workers.nChrChunk; c++) {
-			io_printf(IO_BUF, "Chr - %d: ov = %k, fv = %k\n",
+			io_printf(IO_BUF, "Chr-%d: ov = %k, fv = %k\n",
 					  workers.chrIdxStart+c, objVal[c], fitVal[c]);
 		}
 	}
 	else {
 		for(c=0; c<gaParams.nChr; c++) {
-			io_printf(IO_BUF, "Chr - %d: ov = %k, fv = %k\n",
+			io_printf(IO_BUF, "Chr-%d: ov = %k, fv = %k\n",
 					  c, allObjVal[c], allFitVal[c]);
 		}
 		io_printf(IO_STD, "TFitness = %k\n", TFitness);
@@ -82,14 +90,14 @@ void showProbValues(uint arg0, uint arg1)
 	io_printf(IO_STD, "Probability values:\n-------------------\n");
 	if(!leadAp) {
 		for(c=0; c<workers.nChrChunk; c++) {
-			io_printf(IO_BUF, "p(Chr - %d): %k\n",
+			io_printf(IO_BUF, "p(Chr-%d): %k\n",
 					  workers.chrIdxStart+c, prob[c]);
 		}
 	}
 	else {
 		for(c=0; c<gaParams.nChr; c++) {
-			io_printf(IO_BUF, "p(Chr - %d): %k\n",
-					  workers.chrIdxStart+c, allProb[c]);
+			io_printf(IO_BUF, "p(Chr-%d): %k\n -> cdf = %k",
+					  c, allProb[c], cdf[c]);
 		}
 }
 
@@ -137,6 +145,9 @@ void selfSimulation()
 	gaParams.maxGenVal = DEF_RASTRIGIN_MAXVAL;
 	gaParams.nIter = DEF_MAX_ITER;
 	gaParams.nElite = 0;	// no elitism
+	gaParams.lowerThreshold = REAL_CONST(0.0);
+	gaParams.upperThreshold = REAL_CONST(0.0001);
+	gaParams.cRate = 0.2;
 
 	// then call GA simulation
 	spin1_schedule_callback(runGA,0,0,PRIORITY_NORMAL);

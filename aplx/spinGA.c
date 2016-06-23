@@ -7,8 +7,7 @@
 // it is safer to runGA() as a callback function
 void runGA(uint arg0, uint arg1)
 {
-	uint i, j;
-
+	tic = sv->clock_ms;		// sv->clock_ms is milliseconds since boot
 	// first, initialize memory
 	// inside initMemGA(), chr address is distributed!
 	initMemGA();
@@ -17,80 +16,145 @@ void runGA(uint arg0, uint arg1)
 	spin1_send_mc_packet(MCPL_BCAST_NCHRGEN, (gaParams.nChr << 16) + gaParams.nGen, WITH_PAYLOAD);
 	spin1_send_mc_packet(MCPL_BCAST_MINVAL, getUintFromREAL(gaParams.minGenVal), WITH_PAYLOAD);
 	spin1_send_mc_packet(MCPL_BCAST_MAXVAL, getUintFromREAL(gaParams.maxGenVal), WITH_PAYLOAD);
+	spin1_send_mc_packet(MCPL_BCAST_CRATE, getUintFromREAL(gaParams.cRate), WITH_PAYLOAD);
 
 	// third: send notification to start initializing population
+	nRV = 0;
 	initPopDone = FALSE;
 	initPopCntr = 0;
 	spin1_send_mc_packet(MCPL_BCAST_EOC, 0, WITH_PAYLOAD);
-
-    // wait until pop init done
+	// wait until pop init done
 	while(initPopDone==FALSE) {
-		// do something ??
+		// do something ?? generate RV!
+		generateRV();
 	}
 	showChromosomes(0, 0);
 
+	// then go into GA-loop
+	// during which leadAp can continue generating random numbers useful for roullete wheel
+	gaIter = 0;
+	SolutionFound = -1;
+	do {
+		doEvaluation(0,0);	// will produces objVal, fitVal, probVal, cdf
+		if(SolutionFound >= 0) {
+			// do something....
+			break;
+		}
+		else {
+			doSelection(cdf, rv, nRV, selectedChr);
+			// TODO: special for elite, put them directly into the new generation pool
+			// Note: in addition, those elite also undergo crossover operation!!!
+			doCrossover(gaParams, selectedChr, chr);
+			doMutation(gaParams, chr);
+		}
+	} while(gaIter < gaParams.nIter);
+	toc = sv->clock_ms;
+	io_printf(IO_STD, "Simulation runs in %u-msec\n", toc-tic);
+	reportFinal();
+}
+
+void reportFinal()
+{
+	// report the final solution
+	io_printf(IO_STD, "TODO: final report!\n");
+}
+
+void doEvaluation(uint arg0, uint arg1)
+{
+	ushort i,j;
+
+	nBestChr = 0;		// prepare for collecting the best chromosomes from workers
 	objEvalDone = FALSE;
 	objValCntr = 0;
 	TFitness = 0.0;
 	spin1_send_mc_packet(MCPL_BCAST_OBJEVAL, 0, WITH_PAYLOAD);
 	while(objEvalDone==FALSE) {
-		// do something ??
+		// do something ?? generate RV!
+		generateRV();
 	}
 	showObjFitValues(0, 0);
 
-    // broadcast TFitness and trigger probability computation in workers
-    probEvalDone = FALSE;
-    probValCntr = 0;
-    uint * pTFitness = (uint *)&TFitness;
-    spin1_send_mc_packet(MCPL_BCAST_TFITNESS, *pTFitness, WITH_PAYLOAD);
-    while(probEvalDone==FALSE) {
-		// do something?
-    }
+	SolutionFound = searchForSolution();
+	if(SolutionFound >=0 ) {
+		// do something else...
+		return;
+	}
 
-	// Indar: sampai di sini,23 Juni jam 13:38
-    // then accumulate probabilities into cdf
-    dmaGetProbDone = FALSE;
-    probBuf = sark_alloc(nChr, sizeof(uint));
-    uint tid = spin1_dma_transfer(DMA_TAG_GETPROB_R, (void *)allProb,
-                                  (void *)probBuf, DMA_READ, nChr*sizeof(uint));
-    if(tid==0) {
-        io_printf(IO_STD, "DMA request for prob error!\n");
-        rt_error(RTE_ABORT);
-    }
-	REAL *rv = sark_alloc(nChr, sizeof(uint)); // random values for roulette wheel
-	uchar rngTriggered = FALSE;
-    while(dmaGetProbDone==FALSE) {
-		// while waiting for dma to completed, let's generate rv for roulette wheel
-		rngTriggered = TRUE;
-		for(i=0; i<nChr; i++)
-			rv[i] = genrand_fixp(0.0, 1.0, 0);
-    }
-	if(rngTriggered==FALSE)	// if dma is completed before generating rv
-		for(i=0; i<nChr; i++)
-			rv[i] = genrand_fixp(0.0, 1.0, 0);
+	// broadcast TFitness and trigger probability computation in workers
+	probEvalDone = FALSE;
+	probValCntr = 0;
+	uint * pTFitness = (uint *)&TFitness;
+	spin1_send_mc_packet(MCPL_BCAST_TFITNESS, *pTFitness, WITH_PAYLOAD);
+	while(probEvalDone==FALSE) {
+		// do something ?? generate RV!
+		generateRV();
+	}
 
-	for(i=0; i<nChr; i++) {
-        cdf[i] = 0.0;
-        for(j=0; j<(i+1); j++)
-            cdf[i] += probBuf[i];
-    }
-    showProbValues(0,0);
+	// then accumulate probabilities into cdf
+	dmaGetProbDone = FALSE;		// will be reset in hDMADone
+	REAL *probBuf;				// make a local (DTCM) copy of allProb to speed up computation
+	probBuf = sark_alloc(gaParams.nChr, sizeof(uint));
+	uint tid = 0;
+	while(tid==0) {
+		tid = spin1_dma_transfer(DMA_TAG_GETPROB_R, (void *)allProb,
+									  (void *)probBuf, DMA_READ, gaParams.nChr*sizeof(uint));
+		if(tid==0) {
+			io_printf(IO_STD, "DMA for prob full. Retry!\n");
+		}
+	}
 
-	// call selection procedure
-	doSelection((uint)rv, 0);
+	while(dmaGetProbDone==FALSE) {
+		// while waiting for dma to completed, let's continue generating rv for roulette wheel
+		generateRV();
+	}
+	// let's finish generating RV !
+	for(i=nRV; i<gaParams.nChr; i++)
+		rv[i] = genrand_fixp(0.0, 1.0, 0);
+
+	// then continue with computing cdf
+	for(i=0; i<gaParams.nChr; i++) {
+		cdf[i] = 0.0;
+		for(j=0; j<(i+1); j++)
+			cdf[i] += probBuf[i];
+	}
+	// just for debugging
+	showProbValues(0,0);
 	sark_free(probBuf);
-	sark_free(rv);
-
-	// then do crossover
-	// TODO: special for elite, put them directly into the new generation pool
-	// Note: in addition, those elite also undergo crossover operation!!!
-	doCrossover((uint)cRate, (uint)selectedChr);
 }
 
+// searchForSolution() return 1 if found, other wise return 0
+// it is performed by leadAp
+// it uses bestChr[] and allObjVal for searching
+int searchForSolution()
+{
+	int c, result = -1;
+	REAL bestOV = allObjVal[bestChr[0]];
+	ushort bestC = bestChr[c];
+
+	// select which chromosomes is the best
+	for(c = 1; c<nBestChr; c++) {
+#ifdef BIGGER_IS_BETTER
+		if(allObjVal[bestChr[c]] > bestOV) {
+			bestOV = allObjVal[bestChr[c]];
+			bestC = bestChr[c];
+		}
+#else
+		if(allObjVal[bestChr[c]] < bestOV) {
+			bestOV = allObjVal[bestChr[c]];
+			bestC = bestChr[c];
+		}
+#endif
+	}
+
+	// check if bestOV is within the threshold
+	if(bestOV >= gaParams.lowerThreshold && bestOV <= gaParams.upperThreshold)
+		result = (int)bestC;
+	return result;
+}
 
 void getChrChunk(uint arg0, uint arg1)
 {
-	uint *dest = chr + (chrIdxStart * nGen);
+	uint *dest = chr + (workers.chrIdxStart * gaParams.nGen);
 	uint tid = spin1_dma_transfer(DMA_TAG_CHRCHUNK_R, (void *)dest,
 					   (void *)chrChunk, DMA_READ, workers.szChrChunk);
 	if(tid==0)
@@ -110,8 +174,8 @@ void computeWload(uint arg0, uint arg1)
     // workload, start point, end poing
     ushort wl[NUM_CORES_USED], sp[NUM_CORES_USED] = {0}, ep[NUM_CORES_USED];
 	wID = workers.subBlockID;    // this is my working ID
-	n = nChr / workers.tAvailable;
-	r = nChr % workers.tAvailable;
+	n = gaParams.nChr / workers.tAvailable;
+	r = gaParams.nChr % workers.tAvailable;
 	// to make the remaining part more distributed rather than accumulated at one core:
 	for(i=0; i<workers.tAvailable; i++) {
         wl[i] = n;
@@ -132,7 +196,7 @@ void computeWload(uint arg0, uint arg1)
 
 	// debugging info
 	io_printf(IO_BUF, "nChr = %d, n = %d, r = %d, tAvailable = %d, wID = %d\n",
-		gaParams.nChr, n, r, tAvailable, wID);
+		gaParams.nChr, n, r, workers.tAvailable, wID);
 	io_printf(IO_BUF, "chrIdxStart = %d, chrIdxEnd = %d, nChrChunk = %d\n",
 			  workers.chrIdxStart, workers.chrIdxEnd, workers.nChrChunk);
 
@@ -151,7 +215,7 @@ void computeWload(uint arg0, uint arg1)
 		io_printf(IO_BUF, "worker-%d chrChunk is @ 0x%x\n", wID, chrChunk);
 	}
 
-    uint szDTCMbuf = nChrChunk * sizeof(uint);
+	uint szDTCMbuf = workers.nChrChunk * sizeof(uint);
 	// then prepare DTCM memory for objVal
 	if(objVal != NULL)
 		sark_free(objVal);
@@ -170,7 +234,7 @@ void computeWload(uint arg0, uint arg1)
 	if(fitVal != NULL)
 		sark_free(fitVal);
     io_printf(IO_BUF, "Will allocate DTCM %d-bytes for fitVal\n", szDTCMbuf);
-	fitVal = sark_alloc(nChrChunk, sizeof(uint));
+	fitVal = sark_alloc(workers.nChrChunk, sizeof(uint));
 	if(fitVal == NULL) {
 		io_printf(IO_STD, "Fatal Error allocating DTCM for fitVal by core-%d\n", myCoreID);
 		io_printf(IO_BUF, "Fatal Error allocating DTCM for fitVal by core-%d\n", myCoreID);
@@ -210,10 +274,9 @@ void computeProb(uint arg0, uint arg1)
 {
     uint i;
     uint pv;
-    for(i=0; i<nChrChunk; i++) {
+	for(i=0; i<workers.nChrChunk; i++)
         prob[i] = fitVal[i] / TFitness;
-        spin1_memcpy((void *)&pv, (void *)&prob[i], sizeof(uint));
-    }
+
     // then upload to sdram
     io_printf(IO_BUF, "allprob = 0x%x\n", allProb);
 	uint *dest = (uint *)allProb + workers.chrIdxStart;
@@ -226,21 +289,12 @@ void computeProb(uint arg0, uint arg1)
 			io_printf(IO_BUF, "DMA for prob full. Retry!\n");
 	}
 
+	// debugging: see the prob values
+	// showProbValues(0, 0);
+
     // finally, tell leader that we're done objVal
     spin1_send_mc_packet(MCPL_2LEAD_PROB_RPT, 0, WITH_PAYLOAD);
 }
-
-/*------------------------------------------------------- EVENT HANDLERS ---*/
-
-
-
-
-/*------------------------------ IMPLEMENTATION -------------------------------*/
-
-
-/*----------------------------------- GA Stuffs ----------------------------------------*/
-
-// in initPopulation(), each worker generates initial populations and store them in *chr
 
 // cross() will be called by and its main task is to broadcast message to workers
 // key = 0xc502xxxx, payload=ffffmmmm,
@@ -277,8 +331,8 @@ void execCross(uint arg0, uint arg1)
         // within allowed bit range? -> use regression!!!
 		ushort cp = genrand_ushort(0, nBits, 0);
         // prepare two children
-        uint *c1 = sark_alloc(nGen, sizeof(uint));
-        uint *c2 = sark_alloc(nGen, sizeof(uint));
+		uint *c1 = sark_alloc(gaParams.nGen, sizeof(uint));
+		uint *c2 = sark_alloc(gaParams.nGen, sizeof(uint));
         // TODO: are the parent in chrChunk?
         uint *p1, *p2;
         // if(p[0]>=chrIdxStart && p[0]<=chrIdxEnd)
@@ -295,13 +349,15 @@ void execCross(uint arg0, uint arg1)
 // objEval() is a callback that will be called if worker receives MCPL_BCAST_OBJEVAL
 void objEval(uint arg0, uint arg1)
 {
-	uint i, j;
+	ushort i, j;
 	uint genes[DEF_MAX_GENE];
 	uint *gSrc = chrChunk;			// worker still holds the last working chromosome chunk
 	REAL ov, fv;					// objective value and fitness value
 	uint *pfv = (uint *)&fv;
 //	uint *ptrObjVal, *ptrFitVal;
 
+	REAL bestOV;
+	ushort bestChr;
 	for(i=0; i<workers.nChrChunk; i++) {
 		// copy from chrChunk
 		spin1_memcpy((void *)genes, (void *)gSrc, gaParams.nGen*sizeof(uint));
@@ -309,6 +365,30 @@ void objEval(uint arg0, uint arg1)
 
 		// call objective function defined in gamodel.c by user
 		ov = objFunction(gaParams.nGen, genes);
+#ifdef BIGGER_IS_BETTER
+		if(i==0) {
+			bestOV = ov;
+			bestChr = workers.chrIdxStart;
+		}
+		else {
+			if(bestOV < ov) {
+				bestOV = ov;
+				bestChr = workers.chrIdxStart + i;
+			}
+		}
+
+#else
+		if(i==0) {
+			bestOV = ov;
+			bestChr = workers.chrIdxStart;
+		}
+		else {
+			if(bestOV > ov) {
+				bestOV = ov;
+				bestChr = workers.chrIdxStart + i;
+			}
+		}
+#endif
 		fv = 1.0/ov;
 		objVal[i] = ov;
 		//fitVal[i] = REAL_CONST(1.0)/objVal[i];
@@ -317,11 +397,14 @@ void objEval(uint arg0, uint arg1)
 		// let the leadAp computes the total fitness:
 		//io_printf(IO_BUF, "Sending fitval-%d = %k\n", workers.chrIdxStart+c, fv);
 		spin1_send_mc_packet(MCPL_2LEAD_FITVAL, *pfv, WITH_PAYLOAD);
+
+		// inform leadAp which chromosome is the best
+		spin1_send_mc_packet(MCPL_2LEAD_BEST_CHR, bestChr, WITH_PAYLOAD);
 	}
 
 	// then upload to sdram
 	io_printf(IO_BUF, "allobjval = 0x%x, allfitval = 0x%x\n", allObjVal, allFitVal);
-	uint *dest = (uint *)allObjVal + chrIdxStart;
+	uint *dest = (uint *)allObjVal + workers.chrIdxStart;
 	uint szDMA = workers.nChrChunk * sizeof(uint);
 	uint tid = 0;
 	while(tid==0) {
@@ -330,7 +413,7 @@ void objEval(uint arg0, uint arg1)
 		if(tid==0)
 			io_printf(IO_BUF, "DMA for objVal full. Retry!\n");
 	}
-	dest = (uint *)allFitVal + chrIdxStart;
+	dest = (uint *)allFitVal + workers.chrIdxStart;
 	tid = 0;
 	while(tid==0) {
 		tid = spin1_dma_transfer(DMA_TAG_FITVAL_W, (void *)dest,
@@ -404,16 +487,15 @@ void objEval(uint arg0, uint arg1)
 	//float fitVal[TOTAL_CHROMOSOMES];
 }
 
-// defRouletteWheel will use *cdf, temporary *rv and *selectedChr
-// *rv is created during runGA and passed as arg0 by doSelection()
-void defRouletteWheel(uint arg0, uint arg1)
+// defRouletteWheel will use *cdf, *rv and *selectedChr
+// *rv is created during doEvaluation and passed as arg0 by doSelection()
+void defRouletteWheel(REAL *preComputedCDF, REAL *generatedRV, uint numOfRV, REAL *selectedChromosomes)
 {
-	REAL *rv = (REAL *)arg0;
-	ushort rvCntr, cdfCntr;	// because selectedChr is ushort[]
-	for(rvCntr=0; rvCntr<nChr; rvCntr++) {
-		for(cdfCntr=0; cdfCntr<nChr; cdfCntr++)
-			if(cdf[cdfCntr] > rv[rvCntr]) {
-				selectedChr[rvCntr] = cdfCntr;
+	uint rvCntr, cdfCntr;
+	for(rvCntr=0; rvCntr<numOfRV; rvCntr++) {
+		for(cdfCntr=0; cdfCntr<numOfRV; cdfCntr++)
+			if(preComputedCDF[cdfCntr] > generatedRV[rvCntr]) {
+				selectedChromosomes[rvCntr] = cdfCntr;
 				break;	// skip cdfCntr and continue with rvCntr
 			}
 	}
@@ -438,4 +520,44 @@ int main()
 }
 */
 
+
+void defOnePointCross(gaParams_t p, uint *selectedChromosomesIdx, uint *chromosomes)
+{
+	// here is example of 1 point crossover
+	// hence, no need to spread 0xc503xxxx
+	REAL rv;
+	REAL rhoC = (REAL)cRate;
+	ushort nSelectedChr = nChr; // this reflects the number of individual in *selectedChr
+	ushort parent[2];
+	ushort p1,p2;
+	for(p1=0; p1<nSelectedChr; p1++) {
+		rv = genrand_fixp(0.0, 1.0, 0);
+		if(rv < rhoC) {
+			parent[0] = selectedChr[p1];
+			p2 = parent[0];
+			// make sure that no self-crossing
+			while(p2==parent[0]) {
+				p2 = genrand_ushort(0, nSelectedChr, 0);
+				p2 = selectedChr[p2];
+			}
+			parent[1] = p2;
+			cross(parent, CP_MODE_SINGLE);
+		}
+	}
+}
+
+void defTwoPointsCross(gaParams_t p, uint *selectedChromosomesIdx, uint *chromosomes)
+{
+
+}
+
+void defUniformCross(gaParams_t p, uint *selectedChromosomesIdx, uint *chromosomes)
+{
+
+}
+
+void defMutation(gaParams_t p, uint *chromosomes)
+{
+
+}
 

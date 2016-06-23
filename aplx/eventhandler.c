@@ -46,7 +46,7 @@ void hSDP(uint mBox, uint port)
 
 void hDMADone(uint tid, uint tag)
 {
-	io_printf(IO_BUF, "dma tag-%d has finished!\n", tag);
+	// io_printf(IO_BUF, "dma tag-%d has finished!\n", tag);
 	if(tag==DMA_TAG_CHRCHUNK_W) {
 		spin1_send_mc_packet(MCPL_2LEAD_INITCHR_RPT, myCoreID, WITH_PAYLOAD);
 	}
@@ -89,11 +89,9 @@ void hMCPL(uint key, uint payload)
 			probEvalDone = TRUE;
 		}
 	}
-	else if(key==MCPL_2LEAD_PROBVAL) {
-		// TODO: hitung cdf yang bener!!!
-		// masalahnya, apa yang akan terjadi jika ada core yang mati?
-		// makanya, sementara ini tidak pakai cara broadcasting ini
-		// untuk mengumpulkan cdf
+	else if(key==MCPL_2LEAD_BEST_CHR) {
+		bestChr[mBestChr] = payload;
+		nBestChr++;
 	}
 	/*______________________ workers part ___________________________*/
 	else if(key==MCPL_BCAST_PING) {
@@ -116,10 +114,12 @@ void hMCPL(uint key, uint payload)
 		nChr = payload >> 16;
 		io_printf(IO_BUF, "got nGen = %d, nChr = %d\n", nGen, nChr);
 	}
+	else if(key==MCPL_BCAST_CRATE)
+		gaParams.cRate = getREALFromUint(payload);
 	else if(key==MCPL_BCAST_MINVAL)
-		minGenVal = (REAL)payload;
+		gaParams.minGenVal = getREALFromUint(ayload);
 	else if(key==MCPL_BCAST_MAXVAL)
-		maxGenVal = (REAL)payload;
+		gaParams.maxGenVal = getREALFromUint(payload);
 	else if(key==MCPL_BCAST_EOC)
 		spin1_schedule_callback(computeWload, 0, 0, PRIORITY_NORMAL);
 	else if(key==MCPL_BCAST_CHR_ADDR)

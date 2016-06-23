@@ -34,3 +34,10 @@ void c_main()
 	//spin1_start(SYNC_WAIT);
 	spin1_start(SYNC_NOWAIT);
 }
+
+// stopGA() will be called only by leadAp
+void stopGA(uint arg0, uint arg1)
+{
+	releaseMemGA();
+	io_printf(IO_STD, "[SpinGA-v%d.%d] Finish!\n", MAJOR_VERSION, MINOR_VERSION);
+}

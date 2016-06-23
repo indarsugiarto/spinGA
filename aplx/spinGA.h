@@ -45,13 +45,15 @@
 #define MCPL_BCAST_TFITNESS         0xbca5000B
 #define MCPL_BCAST_PROB_ADDR        0xbca5000C
 #define MCPL_BCAST_NEWCHR_ADDR		0xbca5000D
+#define MCPL_BCAST_CRATE			0xbca5000E	// crossover rate
+#define MCPL_BCAST_EMIGRANTS		0xbca5FFFF	// send emmigrants out
 #define MCPL_2LEAD_PING_RPT			0x1ead0001	// ping reply/report
 #define MCPL_2LEAD_INITCHR_RPT		0x1ead0002	// init population complete
 #define MCPL_2LEAD_OBJEVAL_RPT		0x1ead0003	// objVal complete
 #define MCPL_2LEAD_PROB_RPT         0x1ead0004  // prob complete
 #define MCPL_2LEAD_FITVAL			0x1ead0005	// send fitness value to leadAp
 #define MCPL_2LEAD_OBJVAL			0x1ead0006	// the lower part is chromosome index
-#define MCPL_2LEAD_PROBVAL			0x1ead0007
+#define MCPL_2LEAD_BEST_CHR			0x1ead0007	// send the best chromosome to leadAp
 
 // key contain values?
 #define MCPL_BCAST_CROSS_PAR		0xbca60000	// for crossover parents info
@@ -85,6 +87,7 @@
 #define DEF_MAX_ITER			1000
 #define DEF_MAX_GENE			256
 #define MAX_ELITE				2
+#define MAX_EMIGRANT			6		// == number of external links (will use MCPL to broadcast chromosomes)
 // the following modes will be carried in the lower part of MCPL key (high part is coreID)
 #define WID_MODE				0		// for collecing wID
 #define CP_MODE_SINGLE			1		// for crossover operation
@@ -98,6 +101,9 @@ typedef struct Params {
 	ushort nGen;						// number of genes in a chromosomes
 	REAL minGenVal;
 	REAL maxGenVal;
+	REAL upperThreshold;				// for checking if solution has been found
+	REAL lowerThreshold;
+	REAL cRate;							// crossover rate
 	uint nIter;
 	// for elitism:
 	ushort nElite;						// if 0, then no elitism
@@ -123,6 +129,8 @@ typedef struct w_info {
 gaParams_t gaParams;					// all cores will have this
 
 // other stuffs
+uint64 tic;
+uint64 toc;
 static uint *chr = NULL;                // location of current chromosomes in sdram
 static uint *newChr = NULL;
 static uint *chrChunk = NULL;			// located in DTCM, for each worker
@@ -133,10 +141,14 @@ sdp_msg_t *reportMsg;
 uchar initPopCntr;	// to count, how many workers have finished pop init
 uchar objValCntr;
 uchar probValCntr;
+ushort bestChr[17];						// collection of best Chromosomes
+uchar nBestChr;
 volatile uchar initPopDone;
 volatile uchar objEvalDone;
 volatile uchar probEvalDone;
 volatile uchar dmaGetProbDone;
+uint gaIter;
+volatile int SolutionFound;		// -1 means not found! otherwise, it is the chr index
 static REAL *objVal = NULL;		// each worker has its own objVal[]
 static REAL *fitVal = NULL;		// each worker has its own fitVal[]
 static REAL *prob = NULL;
@@ -144,10 +156,10 @@ static REAL *allObjVal = NULL;	// this is located in sdram, for all
 static REAL *allFitVal = NULL;	//
 static REAL *allProb = NULL;
 static REAL *cdf = NULL;
-static ushort *selectedChr = NULL;			// holds roullette wheel result
-REAL *probBuf;
+static REAL *rv = NULL;						// holds random numbers
+ushort nRV;									// total number of currently generated random numbers (rv)
+static uint *selectedChr = NULL;			// holds roullette wheel result
 REAL TFitness;
-REAL cRate;						// crossover rate
 
 /*------------------------------ forward declaration ------------------------------*/
 // standard spinnaker mechanism
@@ -161,18 +173,30 @@ void getChrChunk(uint arg0, uint arg1);
 void initSDP();
 void initRouter();
 void execCross(uint arg0, uint arg1);
+void stopGA(uint arg0, uint arg1);
+void reportFinal();
 
 // GA core engine
 void initMemGA();
+void releaseMemGA();
 void objEval(uint arg0, uint arg1);
 extern REAL objFunction(ushort nGene, uint genes[]);
 //void runGA(uint iter);
 void runGA(uint arg0, uint arg1);
 void computeProb(uint arg0, uint arg1);
-void defRouletteWheel(uint arg0, uint arg1);
-void doSelection(uint arg0, uint arg1);		// give a freedom for user to use their selection mechanism
-void doCrossover(uint cRate, uint selChr);
+void defRouletteWheel(REAL *preComputedCDF, REAL *generatedRV, uint numOfRV, REAL *selectedChromosomes);
+void defOnePointCross(gaParams_t p, uint *selectedChromosomesIdx, uint *chromosomes);
+void defTwoPointsCross(gaParams_t p, uint *selectedChromosomesIdx, uint *chromosomes);
+void defUniformCross(gaParams_t p, uint *selectedChromosomesIdx, uint *chromosomes);
+void defMutation(gaParams_t p, uint *chromosomes);
+void doEvaluation(uint arg0, uint arg1);
+// give a freedom for user to use their selection mechanism
+// here we provide rv_addr and nRV, should be needed
+void doSelection(REAL *preComputedCDF, REAL *generatedRV, uint numOfRV, REAL *selectedChromosomes);
+void doCrossover(gaParams_t p, uint *selectedChromosomesIdx, uint *chromosomes);
+void doMutation(gaParams_t p, uint *chromosomes);
 void cross(ushort p[2], uint mode);
+int searchForSolution();
 
 // Use mersenne-twister random generator
 extern void init_genrand(unsigned long s);
@@ -186,6 +210,7 @@ extern REAL decodeGen(uint gen);
 void initPopulation();
 
 // helper functions and debugging:
+void generateRV();
 uint bin2gray(uint num);
 uint gray2bin(uint num);
 REAL roundr(REAL inVal);
