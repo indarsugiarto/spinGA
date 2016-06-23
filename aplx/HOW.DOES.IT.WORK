@@ -109,6 +109,8 @@ ____________________________________ How to use stdfix for encoding ___
 
 
 ______________________ stdfix values ___________________________
+This is how stdfix values (min & max) are represented in SpiNNaker:
+
 [18:28:30]-[0,0,1:0] 0x0 = 0.000000
 [18:28:30]-[0,0,1:0] 0x1 = 0.000031
 [18:28:30]-[0,0,1:0] 0x2 = 0.000061
@@ -165,5 +167,18 @@ ______________________ stdfix values ___________________________
 [18:28:30]-[0,0,1:0] 0xfffffffd = -0.000092
 [18:28:30]-[0,0,1:0] 0xfffffffe = -0.000061
 ____________________________________________ stdfix values ___
+
+
+
+________________________ Elements of the Framework ______________________________
+GUI - PyQt4 : trigger app, display the result (including obj/fitness)
+aplx:	- spinGA: dealing with SpiNNaker mechanism
+	- gamodel: dealing with GA modeling
+Idea:
+1. User set-up the model via gamodel.c
+2. Compile & load the aplx in SpiNNaker
+3. Run the gui for starting the simulation & display the result
+
+____________________________________________________ Elements of the Framework __
 
 

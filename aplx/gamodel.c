@@ -56,7 +56,7 @@ uint encodeGen(REAL rVal)
 {
 	uint r;
 	uint *ptr = (uint *)&rVal;
-	r = *ptr;
+	r = *ptr;										// basically getUintFromREAL()
 	return r;
 }
 
@@ -64,7 +64,7 @@ REAL decodeGen(uint gen)
 {
 	REAL r;
 	REAL *ptr = (REAL *)&gen;
-	r = *ptr;
+	r = *ptr;										// basically getREALFromUint()
 	return r;
 }
 

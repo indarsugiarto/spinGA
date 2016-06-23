@@ -25,7 +25,7 @@ SCRIPT = $(SPINN_DIRS)/lib/sark.lnk
 
 # List of objects making up the application. If there are other files
 # in the application, add their object file names to this variable.
-OBJECTS = $(APP).o MT19937.o gamodel.o
+OBJECTS = $(APP).o MT19937.o gamodel.o init.o eventhandler.o util.o main.o
 
 ifndef GNUBIN
     GNUBIN := /opt/arm-2013.05/bin
@@ -112,13 +112,31 @@ $(BUILD_DIR)$(APP).o: $(APP).c $(APP).h
 #	$(MKDIR) $(BUILD_DIR)
 #	$(CC) $(CFLAGS) whatever.c -o $(BUILD_DIR)whatever.o
 
+#Note: OBJECTS = $(APP).o MT19937.o gamodel.o init.o eventhandler.o util.o main.o
+
 $(BUILD_DIR)MT19937.o: MT19937.c
 	@$(MKDIR) $(BUILD_DIR)
-	$(CC) $(CFLAGS) MT19937.c -o $(BUILD_DIR)MT19937.o
+	$(CC) $(CFLAGS) $< -o $@
 
 $(BUILD_DIR)gamodel.o: gamodel.c $(APP).h
 	@$(MKDIR) $(BUILD_DIR)
-	$(CC) $(CFLAGS) gamodel.c -o $(BUILD_DIR)gamodel.o
+	$(CC) $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)init.o: init.c $(APP).h
+	@$(MKDIR) $(BUILD_DIR)
+	$(CC) $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)eventhandler.o: eventhandler.c $(APP).h
+	@$(MKDIR) $(BUILD_DIR)
+	$(CC) $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)util.o: util.c $(APP).h
+	@$(MKDIR) $(BUILD_DIR)
+	$(CC) $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)main.o: main.c $(APP).h
+	@$(MKDIR) $(BUILD_DIR)
+	$(CC) $(CFLAGS) $< -o $@
 
 clean:
 	@$(RM) $(BUILD_DIR)*

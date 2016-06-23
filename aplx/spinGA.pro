@@ -6,7 +6,11 @@ CONFIG -= qt
 SOURCES += \
     spinGA.c \
     gamodel.c \
-    MT19937.c
+    MT19937.c \
+    main.c \
+    eventhandler.c \
+    init.c \
+    util.c
 
 INCLUDEPATH += /opt/spinnaker_tools_134/include
 
