@@ -487,6 +487,10 @@ void objEval(uint arg0, uint arg1)
 	//float fitVal[TOTAL_CHROMOSOMES];
 }
 
+
+/*-------------------------- Default implementation of GA operators ---------------------------*/
+
+
 // defRouletteWheel will use *cdf, *rv and *selectedChr
 // *rv is created during doEvaluation and passed as arg0 by doSelection()
 void defRouletteWheel(REAL *preComputedCDF, REAL *generatedRV, uint numOfRV, REAL *selectedChromosomes)
@@ -502,38 +506,18 @@ void defRouletteWheel(REAL *preComputedCDF, REAL *generatedRV, uint numOfRV, REA
 }
 
 
-/* This shows how roundr() function works
-int main()
-{
-  float conver = 45.592346543;
-  printf("conver is %0.1f\n",conver);
-
-  conver = conver*10.0f;
-  conver = (conver > (floor(conver)+0.5f)) ? ceil(conver) : floor(conver);
-  conver = conver/10.0f;
-
-  //If you're using C99 or better, rather than ANSI C/C89/C90, the following will also work.
-  //conver = roundf(conver*10.0f)/10.0f;
-
-  printf("conver is now %f\n",conver);
-  return 0;
-}
-*/
-
-
 void defOnePointCross(gaParams_t p, uint *selectedChromosomesIdx, uint *chromosomes)
 {
 	// here is example of 1 point crossover
 	// hence, no need to spread 0xc503xxxx
 	REAL rv;
-	REAL rhoC = (REAL)cRate;
-	ushort nSelectedChr = nChr; // this reflects the number of individual in *selectedChr
+    REAL rhoC = p.cRate;
 	ushort parent[2];
 	ushort p1,p2;
-	for(p1=0; p1<nSelectedChr; p1++) {
+    for(p1=0; p1<p.nChr; p1++) {
 		rv = genrand_fixp(0.0, 1.0, 0);
 		if(rv < rhoC) {
-			parent[0] = selectedChr[p1];
+            parent[0] = selectedChromosomesIdx[p1];
 			p2 = parent[0];
 			// make sure that no self-crossing
 			while(p2==parent[0]) {
