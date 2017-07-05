@@ -197,7 +197,7 @@ void initPopulation()
 	// step-2: transfer to sdram via dma
 	// NOTE: uint direction: 0 = transfer to TCM, 1 = transfer to system
 	//       return 0 if the request queue is full, or DMA transfer ID otherwise
-	uint *dest = chr + (chrIdxStart * nGen);
+	uint *dest = chr + (chrIdxStart * gaParams.nGen);
 	io_printf(IO_BUF, "Will store in sdram @ 0x%x\n", dest);
 	uint tid = 0;
 	while(tid == 0) {

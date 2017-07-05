@@ -90,7 +90,7 @@ void hMCPL(uint key, uint payload)
 		}
 	}
 	else if(key==MCPL_2LEAD_BEST_CHR) {
-		bestChr[mBestChr] = payload;
+		bestChr[nBestChr] = payload;
 		nBestChr++;
 	}
 	/*______________________ workers part ___________________________*/
@@ -110,14 +110,14 @@ void hMCPL(uint key, uint payload)
 			spin1_schedule_callback(execCross, key, payload, PRIORITY_NORMAL);
 	}
 	else if(key==MCPL_BCAST_NCHRGEN) {
-		nGen = payload & 0xFFFF;
-		nChr = payload >> 16;
+		uint nGen = payload & 0xFFFF;
+		uint nChr = payload >> 16;
 		io_printf(IO_BUF, "got nGen = %d, nChr = %d\n", nGen, nChr);
 	}
 	else if(key==MCPL_BCAST_CRATE)
 		gaParams.cRate = getREALFromUint(payload);
 	else if(key==MCPL_BCAST_MINVAL)
-		gaParams.minGenVal = getREALFromUint(ayload);
+		gaParams.minGenVal = getREALFromUint(payload);
 	else if(key==MCPL_BCAST_MAXVAL)
 		gaParams.maxGenVal = getREALFromUint(payload);
 	else if(key==MCPL_BCAST_EOC)
